@@ -11,6 +11,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Environment, Sky } from "@react-three/drei";
 import * as THREE from "three";
 import { useGhostStore } from "@/ghost/ghostStore";
+import { isMobileNow } from "@/components/useIsMobile";
 import { getGlowTexture } from "@/ghost/glow";
 import { LAMP_HEAD_MAT, windUniforms } from "@/three/StreetDetails";
 import { setFacadeLights } from "@/three/surfaceShaders";
@@ -117,7 +118,7 @@ function WeatherFog({ ghostMode }: { ghostMode: boolean }) {
 
 // ── rain and snow ──────────────────────────────────────────────────────────
 
-const MAX_DROPS = 7000;
+const MAX_DROPS = isMobileNow() ? 3000 : 7000; // fewer particles on phones
 const BOX_W = 420;
 const BOX_H = 150;
 const RAIN_FALL = 22; // units/s – faster than real life so it reads at city scale

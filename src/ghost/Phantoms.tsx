@@ -12,8 +12,9 @@ import { pointAt, randomWalk, toStreetPath, type StreetGraph } from "./streetGra
 import { useStreetGraph } from "./useStreetGraph.ts";
 import type { StreetPath } from "./types.ts";
 import { useWalkStore } from "@/walk/walkStore";
+import { isMobileNow } from "@/components/useIsMobile";
 
-const COUNT = 9;
+const COUNT = isMobileNow() ? 5 : 9; // fewer on phones
 const HEIGHT = 5.5; // ≈ 12 m – larger than life, so they read from the overview
 const TRAIL = 6;
 const noRaycast = () => null;

@@ -4,6 +4,7 @@
 //   Ectoplasm   – (Ghost Mode) green mist over the streets; thickness = real PM2.5
 //   Moon        – real moon position and phase
 import { useEffect, useMemo, useRef } from "react";
+import { CardSheet } from "@/components/CardSheet";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -109,6 +110,7 @@ function AirStationMarker({ s, p, terrain }: { s: AirStation; p: Projection; ter
       </Html>
       {selected && (
         <Html position={[0, height + 4, 0]} zIndexRange={[1600, 1500]} style={{ transform: "translate(18px, -50%)" }}>
+          <CardSheet>
           <div ref={keepEventsInCard} style={cardStyle}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <div>
@@ -128,6 +130,7 @@ function AirStationMarker({ s, p, terrain }: { s: AirStation; p: Projection; ter
             </div>
             <RealBadge source="Sensor.community (ODbL)" />
           </div>
+          </CardSheet>
         </Html>
       )}
     </group>
@@ -177,6 +180,7 @@ function HistoryMarker({ place, p, terrain }: { place: HistoryPlace; p: Projecti
       </sprite>
       {selected && (
         <Html position={[0, top + 1, 0]} zIndexRange={[1600, 1500]} style={{ transform: "translate(18px, -18%)" }}>
+          <CardSheet>
           <div ref={keepEventsInCard} style={{ ...cardStyle, border: "1px solid rgba(251,191,36,0.5)", background: "rgba(20, 14, 4, 0.94)", color: "#fff7e6" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <div>
@@ -194,6 +198,7 @@ function HistoryMarker({ place, p, terrain }: { place: HistoryPlace; p: Projecti
               <a href={place.url} target="_blank" rel="noreferrer" style={{ color: "#fbbf24", fontSize: 11 }}>Läs mer ↗</a>
             </div>
           </div>
+          </CardSheet>
         </Html>
       )}
     </group>

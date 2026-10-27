@@ -1,5 +1,6 @@
 // ── GHOST PULSE – 3D layer rendered inside Mapforge's <Canvas> ────────────
 import { useEffect, useMemo, useRef } from "react";
+import { CardSheet } from "@/components/CardSheet";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html, Stars } from "@react-three/drei";
 import * as THREE from "three";
@@ -237,7 +238,7 @@ function SensorMarker({ def, index }: { def: SensorDefinition; index: number }) 
 
       {isSelected && (
         <Html position={[0, y + 4, 0]} zIndexRange={[110, 0]} style={{ transform: "translate(24px, -50%)" }}>
-          <SensorCard def={def} />
+          <CardSheet><SensorCard def={def} /></CardSheet>
         </Html>
       )}
     </group>

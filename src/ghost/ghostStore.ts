@@ -35,6 +35,9 @@ type GhostStore = {
   howlCount: number;
   lastHowl: number | null;
   selectedAcousticId: string | null;
+  /** Phones: which overlay is open – only one at a time ("clock" or "panel"). */
+  mobileFocus: "clock" | "panel" | null;
+  setMobileFocus: (f: "clock" | "panel" | null) => void;
   /** Play synthesized sounds (off by default; needs a click to start audio). */
   sound: boolean;
   lastUpdate: number;
@@ -79,6 +82,8 @@ export const useGhostStore = create<GhostStore>((set) => ({
   lastHowl: null,
   selectedAcousticId: null,
   sound: false,
+  mobileFocus: null,
+  setMobileFocus: (mobileFocus) => set({ mobileFocus }),
   lastUpdate: 0,
   intervalMs: 5000,
   selectedId: null,

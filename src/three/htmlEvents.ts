@@ -8,6 +8,9 @@
 const EVENTS = ["pointerdown", "pointerup", "click", "dblclick"] as const;
 
 export function keepEventsInCard(card: HTMLElement | null) {
+  // Mobile card sheets live outside the canvas (portal) – nothing to shield, and
+  // stopping events there would hide them from React's own listener.
+  if (!card || card.closest("[data-card-sheet]")) return;
   let node: HTMLElement | null = card;
   // climb to the element whose parent holds the <canvas> (directly or one level down)
   while (node?.parentElement && !node.parentElement.querySelector("canvas")) node = node.parentElement;

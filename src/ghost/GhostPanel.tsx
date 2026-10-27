@@ -2,6 +2,7 @@
 import { css, keyframes } from "@emotion/react";
 import { useEffect, useState } from "react";
 import { useWalkStore } from "@/walk/walkStore";
+import { isMobileNow, useIsMobile } from "@/components/useIsMobile";
 import { useOpenData, type OpenDataLayers } from "@/opendata/openDataStore";
 import { LevelWave, levelStatus } from "./SoundSensor.tsx";
 import { unlockAudio } from "./howlAudio.ts";
@@ -115,12 +116,25 @@ export function GhostPanel() {
   const setSound = useGhostStore((s) => s.setSound);
   const selectAcoustic = useGhostStore((s) => s.selectAcoustic);
   const toggleReal = useOpenData((s) => s.toggleLayer);
-  const [collapsed, setCollapsed] = useState(false);
+  const mobile = useIsMobile();
+  // On phones the panel starts as a slim bottom sheet so the city stays visible.
+  const [collapsedRaw, setCollapsedRaw] = useState(isMobileNow);
+  const mobileFocus = useGhostStore((s) => s.mobileFocus);
+  const anyCard = useGhostStore((s) => !!(s.selectedId || s.selectedEntityId || s.selectedAcousticId));
+  // Phones: one overlay at a time – the sheet folds when the clock panel or a card opens.
+  const collapsed = collapsedRaw || (mobile && (mobileFocus === "clock" || anyCard));
+  const setCollapsed = (c: boolean) => {
+    setCollapsedRaw(c);
+    if (isMobileNow()) {
+      useGhostStore.getState().setMobileFocus(c ? null : "panel");
+      if (!c) useGhostStore.setState({ selectedId: null, selectedEntityId: null, selectedAcousticId: null });
+    }
+  };
   const walkMode = useWalkStore((s) => s.mode);
   // Make room for the street view: fold the panel while walking, unfold afterwards.
   useEffect(() => {
     if (walkMode === "walk") setCollapsed(true);
-    if (walkMode === "orbit") setCollapsed(false);
+    if (walkMode === "orbit" && !isMobileNow()) setCollapsed(false);
   }, [walkMode]);
   const countdown = useCountdown();
 
@@ -155,22 +169,39 @@ export function GhostPanel() {
         height: collapsed ? "fit-content" : undefined,
         "@media (max-width: 768px)": {
           top: "auto",
-          left: "0.5rem",
-          right: "0.5rem",
+          left: 8,
+          right: 8,
+          bottom: 8,
           width: "auto",
-          height: collapsed ? "fit-content" : "46vh",
+          maxWidth: "none",
+          height: collapsed ? "fit-content" : "62vh",
+          borderRadius: 16,
         },
       })}
     >
       {/* Header */}
-      <div css={css({ padding: "14px 16px 12px", borderBottom: `1px solid ${C.border}` })}>
+      <div css={css({ padding: mobile ? "8px 12px" : "14px 16px 12px", borderBottom: `1px solid ${C.border}` })}>
+        {mobile && (
+          // drag-handle look + tap to open/close the sheet
+          <div onClick={() => setCollapsed(!collapsed)} css={css({ width: 38, height: 4, borderRadius: 4, background: "rgba(255,255,255,0.25)", margin: "0 auto 6px", cursor: "pointer" })} />
+        )}
         <div css={css({ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" })}>
+          {mobile && collapsed ? (
+            // compact summary row
+            <div onClick={() => setCollapsed(false)} css={css({ display: "flex", gap: 12, alignItems: "baseline", fontFamily: mono, fontSize: 12, cursor: "pointer", flex: 1, minWidth: 0 })}>
+              <span css={css({ width: 7, height: 7, borderRadius: "50%", background: C.cyan, boxShadow: `0 0 8px ${C.cyan}`, alignSelf: "center", animation: `${blink} 1.4s infinite` })} />
+              <span><b css={css({ fontSize: 15 })}>{Math.round(total)}</b><span css={css({ color: C.faint })}> energi</span></span>
+              <span><b>{anomalies}</b><span css={css({ color: C.faint })}> anomalier</span></span>
+              <span><b>{entities.length}</b><span css={css({ color: C.faint })}> irrbloss</span></span>
+            </div>
+          ) : (
           <div>
             <div css={css({ fontSize: "18px", fontWeight: 800, letterSpacing: "0.18em", background: `linear-gradient(90deg, ${C.cyan}, ${C.purple})`, WebkitBackgroundClip: "text", color: "transparent" })}>
               GHOST PULSE
             </div>
             <div css={css({ fontSize: "11px", color: C.muted, letterSpacing: "0.04em" })}>Paranormal Activity Monitoring System</div>
           </div>
+          )}
           <div css={css({ display: "flex", gap: 6 })}>
           <button
             onClick={() => { if (!sound) unlockAudio(); setSound(!sound); }}
@@ -178,7 +209,7 @@ export function GhostPanel() {
             aria-pressed={sound}
             css={css({ background: sound ? "rgba(251,146,60,0.18)" : "none", border: `1px solid ${sound ? "#fb923c" : C.border}`, color: sound ? "#ffedd5" : C.muted, borderRadius: "6px", cursor: "pointer", padding: "4px 8px", fontSize: "11px" })}
           >
-            {sound ? "🔊 Ljud på" : "🔇 Ljud"}
+            {sound ? (mobile ? "🔊" : "🔊 Ljud på") : (mobile ? "🔇" : "🔇 Ljud")}
           </button>
           <button
             onClick={() => setCollapsed(!collapsed)}

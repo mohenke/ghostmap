@@ -2,12 +2,14 @@
 import { css } from "@emotion/react";
 import { useState } from "react";
 import { useGhostStore } from "./ghostStore.ts";
+import { useIsMobile } from "@/components/useIsMobile";
 
 const STORAGE_KEY = "ghost-pulse-intro-dismissed";
 
 export function IntroCard() {
   const ghostMode = useGhostStore((s) => s.ghostMode);
   const setGhostMode = useGhostStore((s) => s.setGhostMode);
+  const mobile = useIsMobile();
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) !== "1";
@@ -15,7 +17,8 @@ export function IntroCard() {
       return true;
     }
   });
-  if (!open) return null;
+  // On phones the ghost panel takes the bottom of the screen in Ghost Mode.
+  if (!open || (mobile && ghostMode)) return null;
 
   const close = () => {
     setOpen(false);
@@ -45,7 +48,7 @@ export function IntroCard() {
         lineHeight: 1.5,
         backdropFilter: "blur(10px)",
         userSelect: "text",
-        "@media (max-width: 768px)": { display: "none" },
+        "@media (max-width: 768px)": { left: 8, right: 8, bottom: 8, width: "auto", maxWidth: "none", padding: "12px 14px", fontSize: "12px" },
       })}
     >
       <div css={css({ fontWeight: 800, letterSpacing: "0.14em", fontSize: "13px", color: "#c4b5fd", marginBottom: 6 })}>

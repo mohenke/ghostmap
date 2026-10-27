@@ -1,6 +1,8 @@
 // Street-level HUD: street name, compass, controls help and the exit button.
 import { css } from "@emotion/react";
 import { useWalkStore } from "./walkStore.ts";
+import { useIsMobile } from "@/components/useIsMobile";
+import { Joystick } from "./Joystick.tsx";
 
 const COMPASS = ["N", "NO", "O", "SO", "S", "SV", "V", "NV"];
 
@@ -8,11 +10,14 @@ export function WalkHud({ ghostMode }: { ghostMode: boolean }) {
   const mode = useWalkStore((s) => s.mode);
   const street = useWalkStore((s) => s.street);
   const heading = useWalkStore((s) => s.heading);
+  const mobile = useIsMobile();
   if (mode !== "walk") return null;
   const dir = COMPASS[Math.round(heading / 45) % 8];
   const dark = ghostMode;
 
   return (
+    <>
+    {mobile && <Joystick />}
     <div
       css={css({
         position: "absolute",
@@ -31,6 +36,7 @@ export function WalkHud({ ghostMode }: { ghostMode: boolean }) {
         backdropFilter: "blur(10px)",
         boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
         maxWidth: "calc(100vw - 2rem)",
+        "@media (max-width: 768px)": { left: 8, right: 8, bottom: 8, transform: "none", gap: 10, padding: "8px 10px", maxWidth: "none" },
       })}
     >
       <div css={css({ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 46 })}>
@@ -52,7 +58,9 @@ export function WalkHud({ ghostMode }: { ghostMode: boolean }) {
         <div css={css({ fontSize: 10, letterSpacing: "0.12em", opacity: 0.6, textTransform: "uppercase" })}>Du står på</div>
         <div css={css({ fontSize: 17, fontWeight: 700 })}>{street ?? "…"}</div>
         <div css={css({ fontSize: 11, opacity: 0.7, marginTop: 2 })}>
-          WASD / pilar: gå · Shift: spring · Dra: titta · Klicka på marken: gå dit · Esc: lämna
+          {mobile
+            ? "Styrspak: gå · Dra: titta · Tryck på marken: gå dit"
+            : "WASD / pilar: gå · Shift: spring · Dra: titta · Klicka på marken: gå dit · Esc: lämna"}
         </div>
       </div>
       <button
@@ -65,5 +73,6 @@ export function WalkHud({ ghostMode }: { ghostMode: boolean }) {
         ⬆ Lämna gatan
       </button>
     </div>
+    </>
   );
 }

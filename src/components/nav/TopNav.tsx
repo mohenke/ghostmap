@@ -1,5 +1,6 @@
 import { css } from "@emotion/react";
-import { DetailedHTMLProps, ButtonHTMLAttributes } from "react";
+import { DetailedHTMLProps, ButtonHTMLAttributes, useState } from "react";
+import { useIsMobile } from "@/components/useIsMobile";
 import { useGhostStore } from "@/ghost/ghostStore";
 import { useWalkStore } from "@/walk/walkStore";
 import { sunPosition } from "@/weather/sun";
@@ -27,6 +28,8 @@ export function TopNav({ step }: { step: number }) {
   const darkBar = ghostMode || sunPosition(new Date(), WEATHER_POINT.lat, WEATHER_POINT.lon).elevation < -4;
   document.body.dataset.night = String(darkBar); // dark button style (index.css)
   const setGhostMode = useGhostStore((state) => state.setGhostMode);
+  const mobile = useIsMobile();
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   return (
     <>
@@ -50,7 +53,7 @@ export function TopNav({ step }: { step: number }) {
       >
         <div
           css={css({
-            paddingLeft: "2rem",
+            paddingLeft: mobile ? "0.7rem" : "2rem",
             alignItems: "center",
             flexDirection: "row",
             display: "flex",
@@ -65,7 +68,7 @@ export function TopNav({ step }: { step: number }) {
               letterSpacing: "0.06em",
             })}
           >
-            👻 GHOST PULSE
+            {mobile ? "👻" : "👻 GHOST PULSE"}
           </span>
           <span css={css({ fontSize: "11px", color: darkBar ? "#8b90b8" : "#9aa0a6", "@media (max-width: 1100px)": { display: "none" } })}>
             Haga, Göteborg
@@ -95,8 +98,8 @@ export function TopNav({ step }: { step: number }) {
             })}
           >
             {([
-              [true, "👻 Ghost Mode"],
-              [false, "🏙 Normalläge"],
+              [true, mobile ? "👻 Ghost" : "👻 Ghost Mode"],
+              [false, mobile ? "🏙 Normal" : "🏙 Normalläge"],
             ] as const).map(([on, label]) => {
               const active = ghostMode === on;
               return (
@@ -106,7 +109,7 @@ export function TopNav({ step }: { step: number }) {
                   aria-checked={active}
                   onClick={() => setGhostMode(on)}
                   css={css({
-                    padding: "0.42rem 1rem",
+                    padding: mobile ? "0.4rem 0.75rem" : "0.42rem 1rem",
                     borderRadius: 999,
                     border: "none",
                     cursor: active ? "default" : "pointer",
@@ -148,15 +151,31 @@ export function TopNav({ step }: { step: number }) {
               "&:disabled": { opacity: 0.6, cursor: "wait" },
             })}
           >
-            {walkMode === "orbit" || walkMode === "exiting" ? "🚶 Gå på gatan" : "⬆ Lämna gatan"}
+            {walkMode === "orbit" || walkMode === "exiting"
+              ? (mobile ? "🚶 Gå" : "🚶 Gå på gatan")
+              : (mobile ? "⬆ Upp" : "⬆ Lämna gatan")}
           </button>
         </div>
       </div>
 
 
-      {/* ── Footer ── */}
+      {/* ── Footer (on phones: a small "Källor" button that opens the credits) ── */}
+      {mobile && (
+        <button
+          onClick={() => setSourcesOpen(!sourcesOpen)}
+          aria-expanded={sourcesOpen}
+          css={css({
+            position: "absolute", right: 8, top: "0.6rem", zIndex: 2100, padding: "4px 8px", borderRadius: 999, fontSize: 11,
+            border: `1px solid ${darkBar ? "rgba(139, 92, 246, 0.35)" : "rgba(0,0,0,0.15)"}`,
+            background: darkBar ? "rgba(7, 8, 20, 0.8)" : "rgba(255,255,255,0.8)", color: darkBar ? "#c7cbee" : "#4b5563",
+          })}
+        >
+          ⓘ
+        </button>
+      )}
       <div
         css={css({
+
           position: "absolute", // not "fixed": some blocker extensions hide fixed full-width bars
           bottom: 0,
           left: 0,
@@ -173,6 +192,9 @@ export function TopNav({ step }: { step: number }) {
           fontSize: "11px",
           color: "#9aa0a6",
           "& a": { color: "inherit" },
+          ...(mobile
+            ? { display: sourcesOpen ? "flex" : "none", flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "0.8rem 1rem 2.6rem", lineHeight: 1.5 }
+            : {}),
         })}
       >
         <span>

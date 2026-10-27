@@ -49,6 +49,8 @@ export function GhostMeter() {
       <div
         css={css({
           position: "absolute", left: "1rem", bottom: "2.8rem", zIndex: 1400, width: 210, padding: "10px 12px 12px",
+          // phones: smaller, top-left (the joystick and street bar use the bottom)
+          "@media (max-width: 768px)": { left: 8, top: "4.9rem", bottom: "auto", zoom: 0.72 },
           borderRadius: 14, background: "linear-gradient(160deg, rgba(30,30,40,0.95), rgba(10,10,18,0.95))",
           border: "1px solid rgba(250, 204, 21, 0.35)", color: "#f3f4f6", boxShadow: "0 8px 28px rgba(0,0,0,0.45)",
           animation: value >= 70 ? `${shake} .12s linear infinite` : "none",

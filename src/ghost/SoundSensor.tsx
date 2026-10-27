@@ -3,6 +3,7 @@
 // outwards. Howls turn it amber/red, log an event and – with sound on – play a
 // synthesized howl whose volume depends on how close the camera is.
 import { useEffect, useMemo, useRef } from "react";
+import { CardSheet } from "@/components/CardSheet";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -133,7 +134,7 @@ function SoundSensorMarker({ def }: { def: SensorDefinition }) {
       )}
       {selected && (
         <Html position={[0, 2, 0]} zIndexRange={[1600, 1500]} style={{ transform: "translate(22px, -40%)" }}>
-          <SoundCard def={def} />
+          <CardSheet><SoundCard def={def} /></CardSheet>
         </Html>
       )}
     </group>

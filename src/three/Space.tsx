@@ -1,4 +1,6 @@
 import { useEffect, useRef, useMemo, useState } from "react";
+import { CardSheet } from "@/components/CardSheet";
+import { isMobileNow } from "@/components/useIsMobile";
 import { Canvas, useThree } from "@react-three/fiber";
 import { useAreaStore } from "@/state/areaStore";
 import { Html } from "@react-three/drei";
@@ -183,7 +185,7 @@ function Building({
           // Next to the clicked point (above or below, nudged inwards near the edges) – never covering it.
           style={{ transform: placement }}
         >
-          <BuildingCard info={info} onClose={() => select(null)} />
+          <CardSheet><BuildingCard info={info} onClose={() => select(null)} /></CardSheet>
         </Html>
       )}
     </mesh>
@@ -797,6 +799,12 @@ export function Space() {
 
   const pointerDown = useRef<[number, number]>([0, 0]);
 
+  // Entering walk mode closes a pinned building card.
+  const walkMode = useWalkStore((s) => s.mode);
+  useEffect(() => {
+    if (walkMode === "entering") useBuildingSelection.getState().select(null);
+  }, [walkMode]);
+
   // Escape closes a pinned building card.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -839,7 +847,10 @@ export function Space() {
 
   return (
     <Canvas
-      camera={{ fov: 60, near: 0.5, far: 7000, position: [90, 170, 230] }}
+      // Phones: cap the pixel ratio (big battery/GPU saving) and start further out so
+      // the whole area fits a portrait screen.
+      dpr={[1, isMobileNow() ? 1.5 : 2]}
+      camera={{ fov: 60, near: 0.5, far: 7000, position: isMobileNow() ? [120, 300, 380] : [90, 170, 230] }}
       onPointerDown={(e) => { pointerDown.current = [e.clientX, e.clientY]; }}
       onPointerMissed={(e) => {
         // Close only on a real click on empty space – not at the end of a camera drag.

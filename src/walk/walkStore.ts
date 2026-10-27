@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { useGhostStore } from "@/ghost/ghostStore";
+import { useOpenData } from "@/opendata/openDataStore";
 
 export type WalkMode = "orbit" | "entering" | "walk" | "exiting";
 
@@ -18,6 +20,9 @@ type WalkStore = {
   meter: MeterReading;
   /** Screen position of a click on empty ground – the walk controls turn it into a target. */
   pendingClick: { x: number; y: number } | null;
+  /** On-screen joystick (touch): x = right, y = forward, each −1…1. */
+  joystick: { x: number; y: number };
+  setJoystick: (x: number, y: number) => void;
   enter: () => void;
   exit: () => void;
   setMode: (mode: WalkMode) => void;
@@ -34,7 +39,15 @@ export const useWalkStore = create<WalkStore>((set, get) => ({
   heading: 0,
   meter: { value: 0, nearestWispM: null },
   pendingClick: null,
-  enter: () => get().mode === "orbit" && set({ mode: "entering" }),
+  joystick: { x: 0, y: 0 },
+  setJoystick: (x, y) => set({ joystick: { x, y } }),
+  enter: () => {
+    if (get().mode !== "orbit") return;
+    // open cards would cover the street view (and on phones the walk controls)
+    useGhostStore.setState({ selectedId: null, selectedEntityId: null, selectedAcousticId: null });
+    useOpenData.setState({ selectedAir: null, selectedPlace: null });
+    set({ mode: "entering" });
+  },
   exit: () => get().mode === "walk" && set({ mode: "exiting", pendingClick: null }),
   setMode: (mode) => set({ mode }),
   setStreet: (street) => get().street !== street && set({ street }),

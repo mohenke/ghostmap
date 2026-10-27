@@ -134,29 +134,37 @@ export function WalkControls() {
       const cardOpen = document.querySelector('[role="dialog"] button[aria-label="Stäng"]') || useGhostStore.getState().selectedId || useGhostStore.getState().selectedEntityId || useGhostStore.getState().selectedAcousticId;
       if (!cardOpen) useWalkStore.getState().exit();
     };
-    let dragging = false, lastX = 0, lastY = 0;
-    const pdown = (e: PointerEvent) => { if (e.button === 0) { dragging = true; lastX = e.clientX; lastY = e.clientY; } };
+    // Look around by dragging – only with the finger/mouse that started on the 3D view,
+    // so moving the on-screen joystick with another finger doesn't turn the camera.
+    let lookId: number | null = null, lastX = 0, lastY = 0;
+    const prevTouchAction = el.style.touchAction;
+    el.style.touchAction = "none"; // no page scroll/zoom while walking on a touch screen
+    const pdown = (e: PointerEvent) => { if (e.button === 0 && lookId === null) { lookId = e.pointerId; lastX = e.clientX; lastY = e.clientY; } };
     const pmove = (e: PointerEvent) => {
-      if (!dragging) return;
+      if (e.pointerId !== lookId) return;
       yaw.current += (e.clientX - lastX) * LOOK_SPEED;
       pitch.current = THREE.MathUtils.clamp(pitch.current + (e.clientY - lastY) * LOOK_SPEED, -1.2, 1.2);
       lastX = e.clientX; lastY = e.clientY;
     };
-    const pup = () => { dragging = false; };
+    const pup = (e: PointerEvent) => { if (e.pointerId === lookId) lookId = null; };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("keydown", esc, true); // capture: runs before cards close on the same key
     el.addEventListener("pointerdown", pdown);
     window.addEventListener("pointermove", pmove);
     window.addEventListener("pointerup", pup);
+    window.addEventListener("pointercancel", pup);
     return () => {
       keys.current = {};
+      el.style.touchAction = prevTouchAction;
+      useWalkStore.getState().setJoystick(0, 0);
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("keydown", esc, true);
       el.removeEventListener("pointerdown", pdown);
       window.removeEventListener("pointermove", pmove);
       window.removeEventListener("pointerup", pup);
+      window.removeEventListener("pointercancel", pup);
     };
   }, [mode, gl]);
 
@@ -193,12 +201,15 @@ export function WalkControls() {
 
     // movement
     const k = keys.current;
-    const fwd = (k["w"] || k["arrowup"] ? 1 : 0) - (k["s"] || k["arrowdown"] ? 1 : 0);
-    const side = (k["d"] || k["arrowright"] ? 1 : 0) - (k["a"] || k["arrowleft"] ? 1 : 0);
-    const speed = k["shift"] ? RUN_SPEED : WALK_SPEED;
+    const joy = useWalkStore.getState().joystick;
+    const joyLen = Math.min(1, Math.hypot(joy.x, joy.y));
+    const fwd = (k["w"] || k["arrowup"] ? 1 : 0) - (k["s"] || k["arrowdown"] ? 1 : 0) + joy.y;
+    const side = (k["d"] || k["arrowright"] ? 1 : 0) - (k["a"] || k["arrowleft"] ? 1 : 0) + joy.x;
+    // the joystick runs when pushed all the way out
+    const speed = k["shift"] || joyLen > 0.92 ? RUN_SPEED : WALK_SPEED * Math.max(joyLen > 0 ? joyLen : 1, 0.35);
     let dx = 0, dz = 0;
     const sin = Math.sin(yaw.current), cos = Math.cos(yaw.current);
-    if (fwd || side) {
+    if (Math.abs(fwd) > 0.05 || Math.abs(side) > 0.05) {
       target.current = null;
       dx = (-sin * fwd + cos * side);
       dz = (-cos * fwd - sin * side);

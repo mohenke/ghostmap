@@ -5,6 +5,7 @@
 // Positions are derived from each entity's route, start time and speed, so the
 // motion is smooth between the data source's 5-second updates.
 import { useEffect, useMemo, useRef } from "react";
+import { CardSheet } from "@/components/CardSheet";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -179,7 +180,7 @@ function WispMarker({ entity }: { entity: GhostEntity }) {
         </sprite>
         {selected && (
           <Html position={[0, 1.2, 0]} zIndexRange={[115, 0]} style={{ transform: "translate(18px, -50%)" }}>
-            <WispCard entity={entity} />
+            <CardSheet><WispCard entity={entity} /></CardSheet>
           </Html>
         )}
       </group>

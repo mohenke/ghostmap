@@ -29,6 +29,7 @@ import { useWalkStore } from "@/walk/walkStore";
 import { WalkHud } from "@/walk/WalkHud";
 import { GhostMeter } from "@/walk/GhostMeter";
 import { ClockWeather } from "@/weather/ClockWeather";
+import { useIsMobile } from "@/components/useIsMobile";
 import { useOpenDataFeed } from "@/opendata/openDataStore";
 import { fetchTerrainGrid, withBase } from "@/three/terrain";
 
@@ -187,6 +188,7 @@ function App() {
   const setProjection = useAreaStore((state) => state.setProjection);
   const ghostMode = useGhostStore((state) => state.ghostMode);
   const walking = useWalkStore((state) => state.mode !== "orbit");
+  const isMobile = useIsMobile();
   const setAction = useActionStore((state) => state.setAction);
   const includeGroundPlane = useActionStore((state) => state.includeGroundPlane);
   const setIncludeGroundPlane = useActionStore((state) => state.setIncludeGroundPlane);
@@ -787,10 +789,11 @@ function App() {
       </Modal>
 
 
-      {step === 2 && ghostMode && <GhostPanel />}
+      {/* phones: the walk HUD and ghost meter use the screen while walking */}
+      {step === 2 && ghostMode && !(walking && isMobile) && <GhostPanel />}
       {step === 2 && !walking && <IntroCard />}
       {step === 2 && <WalkHud ghostMode={ghostMode} />}
-      {step === 2 && <ClockWeather ghostMode={ghostMode} />}
+      {step === 2 && !(walking && isMobile) && <ClockWeather ghostMode={ghostMode} />}
       {step === 2 && ghostMode && <GhostMeter />}
 
       <Space></Space>

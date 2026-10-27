@@ -1,5 +1,7 @@
 // Live clock and current weather for Haga – top left of the 3D view.
 import { css } from "@emotion/react";
+import { useIsMobile } from "@/components/useIsMobile";
+import { useGhostStore } from "@/ghost/ghostStore";
 import { useEffect, useMemo, useState } from "react";
 import { SYMBOLS, compass } from "./smhi.ts";
 import { sunPosition, sunTimes } from "./sun.ts";
@@ -20,6 +22,15 @@ export function ClockWeather({ ghostMode }: { ghostMode: boolean }) {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+  const mobile = useIsMobile();
+  const [expandedRaw, setExpandedRaw] = useState(false);
+  const mobileFocus = useGhostStore((s) => s.mobileFocus);
+  const expanded = expandedRaw && mobileFocus !== "panel";
+  const setExpanded = (on: boolean) => {
+    setExpandedRaw(on);
+    useGhostStore.getState().setMobileFocus(on ? "clock" : null);
+    if (on) useGhostStore.setState({ selectedId: null, selectedEntityId: null, selectedAcousticId: null }); // one overlay at a time
+  };
   const weather = useWeatherStore((s) => s.weather);
   const status = useWeatherStore((s) => s.status);
   const air = useOpenData((s) => s.air);
@@ -49,12 +60,37 @@ export function ClockWeather({ ghostMode }: { ghostMode: boolean }) {
     accent: dark ? "#22d3ee" : "#7c3aed",
   };
 
+  // Phones: a slim strip (time · weather · wind) that expands into the full panel on tap.
+  if (mobile && !expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        aria-label="Visa klocka, väder, måne och luft"
+        css={css({
+          position: "absolute", top: "3.5rem", left: 8, zIndex: 1450, display: "flex", alignItems: "center", gap: 8,
+          padding: "5px 10px", borderRadius: 999, background: c.bg, border: `1px solid ${c.border}`, color: c.text,
+          backdropFilter: "blur(12px)", fontSize: 12, fontFamily: "inherit",
+        })}
+      >
+        <b css={css({ fontFamily: mono, fontSize: 14 })}>{fmt(now)}</b>
+        {live && (
+          <>
+            <span>{icon} {weather.temperature.toFixed(0)}°</span>
+            <span css={css({ color: c.muted })}>{weather.windSpeed.toFixed(0)} m/s</span>
+          </>
+        )}
+        <span css={css({ color: c.muted })}>▾</span>
+      </button>
+    );
+  }
+
   return (
     <div
+      onClick={mobile ? () => setExpanded(false) : undefined}
       css={css({
         position: "absolute",
-        top: "3.6rem",
-        left: "1rem",
+        top: mobile ? "3.5rem" : "3.6rem",
+        left: mobile ? 8 : "1rem",
         zIndex: 1450,
         width: 300,
         padding: "12px 14px",
@@ -65,7 +101,7 @@ export function ClockWeather({ ghostMode }: { ghostMode: boolean }) {
         backdropFilter: "blur(12px)",
         boxShadow: dark ? "0 0 30px rgba(88, 28, 235, 0.2)" : "0 6px 24px rgba(0,0,0,0.12)",
         userSelect: "none",
-        "@media (max-width: 768px)": { width: "auto", right: "1rem", padding: "8px 10px" },
+        "@media (max-width: 768px)": { width: "auto", right: 8, padding: "10px 12px", maxHeight: "70vh", overflowY: "auto" },
       })}
     >
       {/* clock */}
