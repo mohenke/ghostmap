@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { TerrainGrid } from "@/three/terrain";
 
 /**
  * All values needed to project lat/lon → Three.js scene units.
@@ -36,6 +37,28 @@ export type PolylineElem = {
   geometry: Array<{ lat: number; lon: number }>;
 };
 
+/** A single OSM node (tree, lamp, bench …). */
+export type PointElem = {
+  id: number | string;
+  lat: number;
+  lon: number;
+  tags: any;
+};
+
+/** Street furniture and greenery – drawn as instanced meshes. */
+export type StreetDetails = {
+  trees: PointElem[];
+  treeRows: PolylineElem[];
+  tramways: PolylineElem[];
+  walls: PolylineElem[];
+  benches: PointElem[];
+  lamps: PointElem[];
+  /** Cafés, restaurants, shops … shown in the building card ("I huset"). */
+  pois: PointElem[];
+};
+
+export const EMPTY_DETAILS: StreetDetails = { trees: [], treeRows: [], tramways: [], walls: [], benches: [], lamps: [], pois: [] };
+
 type AreaStore = {
   areas: any;
   roads: any[];
@@ -45,6 +68,9 @@ type AreaStore = {
   streams: PolylineElem[];
   forests: PolygonRing[];
   railways: PolylineElem[];
+  details: StreetDetails;
+  /** Height grid for the area, or null for flat ground. */
+  terrain: TerrainGrid | null;
   center: {
     lat: number;
     lng: number;
@@ -59,6 +85,8 @@ type AreaStore = {
   setStreams: (streams: PolylineElem[]) => void;
   setForests: (forests: PolygonRing[]) => void;
   setRailways: (railways: PolylineElem[]) => void;
+  setDetails: (details: StreetDetails) => void;
+  setTerrain: (terrain: TerrainGrid | null) => void;
   setCenter: (center: any[]) => void;
   setProjection: (p: Projection) => void;
 };
@@ -72,6 +100,8 @@ export const useAreaStore = create<AreaStore>((set) => ({
   streams: [],
   forests: [],
   railways: [],
+  details: EMPTY_DETAILS,
+  terrain: null,
   center: [
     { lat: 40.8,  lng: -73.95 },
     { lat: 40.83, lng: -73.88 },
@@ -85,6 +115,8 @@ export const useAreaStore = create<AreaStore>((set) => ({
   setStreams:       (streams)       => set(() => ({ streams: [...streams] })),
   setForests:       (forests)       => set(() => ({ forests: [...forests] })),
   setRailways:      (railways)      => set(() => ({ railways: [...railways] })),
+  setDetails:       (details)       => set(() => ({ details })),
+  setTerrain:       (terrain)       => set(() => ({ terrain })),
   setCenter:        (center)        => set(() => ({ center: [...center] })),
   setProjection:    (p)             => set(() => ({ projection: p })),
 }));

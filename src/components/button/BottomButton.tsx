@@ -12,6 +12,7 @@ interface ButtonProps
 export function NextButton(props: ButtonProps) {
   return (
     <button
+      className="mf-btn"
       css={css({
         position: "absolute",
         zIndex: 9999,
@@ -49,6 +50,7 @@ export function NextButton(props: ButtonProps) {
 export function PrevButton(props: ButtonProps) {
   return (
     <button
+      className="mf-btn"
       css={css({
         position: "absolute",
         zIndex: 9999,
@@ -86,6 +88,7 @@ export function PrevButton(props: ButtonProps) {
 export function Button(props: ButtonProps) {
   return (
     <button
+      className="mf-btn"
       css={css({
         zIndex: 9999,
         color: "#000000",

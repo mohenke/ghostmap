@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+.claude
+*.tsbuildinfo
+*.log
+.DS_Store
+# Blender working files and screenshots are not needed in the web image
+blender/*.blend
+blender/*.blend1
+blender/haga-mapforge-export.glb
+blender/*.png
+docs/screenshots

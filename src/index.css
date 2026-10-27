@@ -28,3 +28,15 @@ body,
     "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji",
     "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
 }
+
+/* GHOST PULSE: dark buttons while Ghost Mode is active */
+body[data-ghost="true"] .mf-btn,
+body[data-night="true"] .mf-btn {
+  background-color: rgba(10, 11, 28, 0.82) !important;
+  color: #d9dcff !important;
+  outline: 1px solid rgba(139, 92, 246, 0.35) !important;
+}
+body[data-ghost="true"] .mf-btn:hover,
+body[data-night="true"] .mf-btn:hover {
+  background-color: rgba(76, 29, 149, 0.55) !important;
+}

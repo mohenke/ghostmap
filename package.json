@@ -1,5 +1,5 @@
 {
-  "name": "mapforge",
+  "name": "ghost-pulse",
   "private": true,
   "repository": {
     "type": "git",
@@ -11,7 +11,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:sim": "node scripts/test-simulation.ts",
+    "test:weather": "node scripts/test-weather.ts",
+    "test:streets": "node scripts/test-streets.ts",
+    "test:walk": "node scripts/test-walk.ts",
+    "test:opendata": "node scripts/test-opendata.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

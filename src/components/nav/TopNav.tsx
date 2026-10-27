@@ -1,10 +1,9 @@
-import { useCarStore } from "@/state/carStore";
 import { css } from "@emotion/react";
-import { DetailedHTMLProps, ButtonHTMLAttributes, useState } from "react";
-import { Modal } from "../modal/Modal";
-import { Column } from "../flex/Column";
-import { Title } from "../text/Title";
-import { Description } from "../text/Description";
+import { DetailedHTMLProps, ButtonHTMLAttributes } from "react";
+import { useGhostStore } from "@/ghost/ghostStore";
+import { useWalkStore } from "@/walk/walkStore";
+import { sunPosition } from "@/weather/sun";
+import { WEATHER_POINT } from "@/weather/weatherStore";
 
 const TOP_PANEL_HEIGHT = "3rem";
 const BORDER_COLOR = "#ededf290";
@@ -21,11 +20,13 @@ interface ButtonProps
 }
 
 export function TopNav({ step }: { step: number }) {
-  const setThirdMode = useCarStore((state) => state.setThirdMode);
-  const thirdMode = useCarStore((state) => state.thirdMode);
-  const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+  const walkMode = useWalkStore((state) => state.mode);
 
-  const [openModal, setOpenModal] = useState(false);
+  const ghostMode = useGhostStore((state) => state.ghostMode);
+  // The bars turn dark in Ghost Mode and after sunset in day mode.
+  const darkBar = ghostMode || sunPosition(new Date(), WEATHER_POINT.lat, WEATHER_POINT.lon).elevation < -4;
+  document.body.dataset.night = String(darkBar); // dark button style (index.css)
+  const setGhostMode = useGhostStore((state) => state.setGhostMode);
 
   return (
     <>
@@ -34,15 +35,15 @@ export function TopNav({ step }: { step: number }) {
           display: "flex",
           transition: ".5s",
           transform: "translate(0px, 0px)",
-          position: "fixed",
+          position: "absolute", // not "fixed": some blocker extensions hide fixed full-width bars
           top: 0,
           left: 0,
           width: "100%",
           height: TOP_PANEL_HEIGHT,
-          backgroundColor: "#ffffff50",
+          backgroundColor: darkBar ? "rgba(7, 8, 20, 0.7)" : "#ffffff50",
           backdropFilter: "blur(12px)",
-          borderBottom: `1px solid ${BORDER_COLOR}`,
-          zIndex: 9999,
+          borderBottom: `1px solid ${darkBar ? "rgba(139, 92, 246, 0.25)" : BORDER_COLOR}`,
+          zIndex: 2000,
           justifyContent: "space-between",
           alignItems: "center",
         })}
@@ -60,10 +61,14 @@ export function TopNav({ step }: { step: number }) {
             css={css({
               fontSize: "14px",
               fontWeight: "600",
-              color: "#5b5d63",
+              color: darkBar ? "#e5e7ff" : "#5b5d63",
+              letterSpacing: "0.06em",
             })}
           >
-            🗺️ Mapforge
+            👻 GHOST PULSE
+          </span>
+          <span css={css({ fontSize: "11px", color: darkBar ? "#8b90b8" : "#9aa0a6" })}>
+            Haga, Göteborg
           </span>
         </div>
 
@@ -84,65 +89,78 @@ export function TopNav({ step }: { step: number }) {
             gap: "0.5rem",
           })}
         >
-          <NavButton
-            isShow={true}
-            onClick={() => window.open("https://github.com/stonyp/mapforge")}
+          <button
+            onClick={() => setGhostMode(!ghostMode)}
+            css={css({
+              display: step == 2 ? "flex" : "none",
+              alignItems: "center",
+              gap: "0.4rem",
+              padding: "0.45rem 1rem",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              cursor: "pointer",
+              border: ghostMode ? "1px solid #a855f7" : "1px solid #7c3aed",
+              color: ghostMode ? "#f5f3ff" : "#ffffff",
+              background: ghostMode
+                ? "linear-gradient(90deg, rgba(34,211,238,0.25), rgba(168,85,247,0.35))"
+                : "linear-gradient(90deg, #4c1d95, #7c3aed)",
+              boxShadow: ghostMode ? "0 0 16px rgba(168,85,247,0.55)" : "0 2px 10px rgba(124,58,237,0.35)",
+              transition: "0.2s",
+            })}
           >
-            GitHub
-          </NavButton>
-          <NavButton isShow={step >= 1} onClick={() => setOpenModal(true)}>
-            Options
-          </NavButton>
+            {ghostMode ? "👻 Ghost Mode: PÅ" : "👻 Aktivera Ghost Mode"}
+          </button>
 
-          {!isMobile && (
-            <>
-              {thirdMode ? (
-                <NavButton
-                  isShow={step == 2}
-                  onClick={() => setThirdMode(false)}
-                >
-                  Disable Car
-                </NavButton>
-              ) : (
-                <NavButton
-                  isShow={step == 2}
-                  onClick={() => setThirdMode(true)}
-                >
-                  Car Mode
-                </NavButton>
-              )}
-            </>
-          )}
+          <NavButton
+            isShow={step == 2}
+            disabled={walkMode === "entering" || walkMode === "exiting"}
+            onClick={() => (walkMode === "orbit" ? useWalkStore.getState().enter() : useWalkStore.getState().exit())}
+          >
+            {walkMode === "orbit" || walkMode === "exiting" ? "🚶 Gå på gatan" : "⬆ Lämna gatan"}
+          </NavButton>
         </div>
       </div>
 
-      <Modal isOpen={openModal} onClose={() => setOpenModal(false)}>
-        <Column gap="0.5rem">
-          <Title>Options </Title>
-        </Column>
-      </Modal>
 
       {/* ── Footer ── */}
       <div
         css={css({
-          position: "fixed",
+          position: "absolute", // not "fixed": some blocker extensions hide fixed full-width bars
           bottom: 0,
           left: 0,
           width: "100%",
           padding: "0.4rem 1.5rem",
-          backgroundColor: "#ffffff50",
+          backgroundColor: darkBar ? "rgba(7, 8, 20, 0.7)" : "#ffffff50",
           backdropFilter: "blur(12px)",
-          borderTop: `1px solid ${BORDER_COLOR}`,
-          zIndex: 9999,
+          borderTop: `1px solid ${darkBar ? "rgba(139, 92, 246, 0.25)" : BORDER_COLOR}`,
+          zIndex: 2000,
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
           alignItems: "center",
+          boxSizing: "border-box",
           fontSize: "11px",
           color: "#9aa0a6",
-          pointerEvents: "none",
+          "& a": { color: "inherit" },
         })}
       >
-        Built by AIssacArt
+        <span>
+          Kartdata ©{" "}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+            OpenStreetMap-bidragsgivare
+          </a>{" "}
+          (ODbL) · Väderdata:{" "}
+          <a href="https://www.smhi.se/data" target="_blank" rel="noreferrer">SMHI</a> (CC BY 4.0) · Luft:{" "}
+          <a href="https://sensor.community" target="_blank" rel="noreferrer">Sensor.community</a> · Historia:{" "}
+          <a href="https://sv.wikipedia.org" target="_blank" rel="noreferrer">Wikipedia</a> (CC BY-SA) · Höjd: AWS Terrain Tiles ·
+          Spökdata: simulerade och fiktiva
+        </span>
+        <span>
+          Baserad på{" "}
+          <a href="https://github.com/stonyp/mapforge" target="_blank" rel="noreferrer">Mapforge</a>{" "}
+          (MIT) av AIssacArt
+        </span>
       </div>
     </>
   );
@@ -151,6 +169,7 @@ export function TopNav({ step }: { step: number }) {
 export function NavButton(props: ButtonProps) {
   return (
     <button
+      className="mf-btn"
       css={css({
         color: "#000000",
         backgroundColor: "#ffffff96",

@@ -15,13 +15,24 @@ import { Building } from "@/components/map/Processing";
 import { ChevronLeft, ChevronRight, Download, Loader2, Search } from "lucide-react";
 import L from "leaflet";
 import { useAreaStore } from "@/state/areaStore";
-import type { PolygonRing, PolylineElem } from "@/state/areaStore";
+import type { PointElem, PolygonRing, PolylineElem } from "@/state/areaStore";
 import { useActionStore } from "@/state/exportStore";
 import { Modal } from "@/components/modal/Modal";
 import { TopNav } from "@/components/nav/TopNav";
 import { getCookie } from "@/utils/cookie";
 import { Row } from "@/components/flex/Row";
 import instanceFleet from "@/api/axios";
+import { useGhostStore } from "@/ghost/ghostStore";
+import { useGhostFeed } from "@/ghost/useGhostFeed";
+import { GhostPanel } from "@/ghost/GhostPanel";
+import { IntroCard } from "@/ghost/IntroCard";
+import { useWeatherFeed } from "@/weather/weatherStore";
+import { useWalkStore } from "@/walk/walkStore";
+import { WalkHud } from "@/walk/WalkHud";
+import { GhostMeter } from "@/walk/GhostMeter";
+import { ClockWeather } from "@/weather/ClockWeather";
+import { useOpenDataFeed } from "@/opendata/openDataStore";
+import { fetchTerrainGrid, withBase } from "@/three/terrain";
 
 const IconSize = css({
   width: "14px",
@@ -71,6 +82,43 @@ function toPolygonRings(els: any[]): PolygonRing[] {
 
 // ── ──────────────────────────────────────────────────────────────────────────
 
+// Public Overpass servers are often busy – try them in order.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+async function fetchOverpass(query: string): Promise<any> {
+  let lastError: unknown = null;
+  for (const url of OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        body: query,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      return await response.json();
+    } catch (err) {
+      lastError = err;
+      console.warn(`Overpass endpoint failed: ${url}`, err);
+    }
+  }
+  throw lastError ?? new Error("All Overpass endpoints failed");
+}
+
+// Places shown in the building card ("I huset: Café Husaren").
+const POI_AMENITIES = new Set(["cafe", "restaurant", "pub", "bar", "fast_food", "ice_cream", "library", "place_of_worship", "theatre", "cinema", "arts_centre", "community_centre"]);
+const POI_TOURISM = new Set(["museum", "hotel", "attraction"]);
+
+/** Bundled OSM snapshot of Haga, Göteborg – lets the demo start without Overpass. */
+const HAGA_SNAPSHOT_URL = "/data/haga-osm.json";
+/** Height grid for Haga (see scripts/make_terrain.py). */
+const HAGA_TERRAIN_URL = "/data/haga-terrain.json";
+/** Haga model enhanced in Blender (see blender/README.md). */
+const HAGA_MODEL_URL = "/models/haga-ghost.glb";
+
 const BOX_HALF_LAT: Record<"small" | "medium" | "large", number> = {
   small: 0.0018,
   medium: 0.0072,
@@ -98,6 +146,7 @@ function App() {
   const [buildProgress, setBuildProgress] = useState(0);
   const [buildStatus, setBuildStatus] = useState("");
   const [fetchError, setFetchError] = useState("");
+  const [hagaError, setHagaError] = useState("");
   const mapRef = useRef<MapComponentRef>(null);
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -116,7 +165,11 @@ function App() {
   const setStreams = useAreaStore((state) => state.setStreams);
   const setForests = useAreaStore((state) => state.setForests);
   const setRailways = useAreaStore((state) => state.setRailways);
+  const setDetails = useAreaStore((state) => state.setDetails);
+  const setTerrain = useAreaStore((state) => state.setTerrain);
   const setProjection = useAreaStore((state) => state.setProjection);
+  const ghostMode = useGhostStore((state) => state.ghostMode);
+  const walking = useWalkStore((state) => state.mode !== "orbit");
   const setAction = useActionStore((state) => state.setAction);
   const setFleet = useActionStore((state) => state.setFleet);
   const includeGroundPlane = useActionStore((state) => state.includeGroundPlane);
@@ -218,23 +271,8 @@ function App() {
     }
   };
 
-  const requestBuildings = async (): Promise<boolean> => {
-    setIsFetchingBuildings(true);
-    setFetchError("");
-    setBuildProgress(0);
-    setBuildStatus("Fetching map data from OpenStreetMap...");
-
-    let p = 0;
-    progressIntervalRef.current = setInterval(() => {
-      p = p + (85 - p) * 0.05;
-      setBuildProgress(p);
-    }, 200);
-
-    const south = areaData[1].lat;
-    const west = areaData[1].lng;
-    const north = areaData[0].lat;
-    const east = areaData[0].lng;
-
+  /** Locks the projection for a bbox and loads OSM elements into the stores. */
+  const loadOsmData = (data: any, south: number, west: number, north: number, east: number) => {
     // Lock projection parameters at generation time — never recalculated on resize.
     const SCENE_SCALE = 51000;
     const refLat = (north + south) / 2;
@@ -252,8 +290,201 @@ function App() {
       },
     });
 
+    const blds: Building[] = data.elements
+      .filter((el: any) => el.tags?.building)
+      .map((element: any) => {
+        // Multipolygon buildings: use the first outer ring as footprint.
+        const ring = element.geometry ?? extractOuterRings(element)[0];
+        return {
+          id: element.id,
+          osmType: element.type,
+          tags: element.tags,
+          geometry: ring ? ring.map((pt: any) => ({ lat: pt.lat, lng: pt.lon })) : undefined,
+        };
+      });
+    const rdElems = data.elements
+      .filter((el: any) => el.tags?.highway && el.geometry?.length >= 2)
+      .map((el: any) => ({
+        id: el.id,
+        tags: el.tags,
+        geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
+      }));
+
+    // ── Phase 1: Parks (leisure=park + landuse=grass + natural=grassland) ──
+    const parkElems = data.elements.filter(
+      (el: any) =>
+        el.tags?.leisure === "park" ||
+        el.tags?.landuse === "grass" ||
+        el.tags?.natural === "grassland"
+    );
+    const parsedParks: PolygonRing[] = toPolygonRings(parkElems);
+
+    // ── Phase 1: Water polygons (natural=water) ──────────────────────────
+    const waterPolyElems = data.elements.filter(
+      (el: any) => el.tags?.natural === "water"
+    );
+
+    // ── Diagnostic: water polygon extraction ─────────────────────────────
+    {
+      const waterWays = waterPolyElems.filter((e: any) => e.type === "way");
+      const waterRels = waterPolyElems.filter((e: any) => e.type === "relation");
+      console.group(`Water polygons diagnostic (${waterPolyElems.length} total)`);
+      console.log(`  ways:      ${waterWays.length}`);
+      console.log(`  relations: ${waterRels.length}`);
+
+      let relSucceeded = 0;
+      let relSkipped = 0;
+      for (const rel of waterRels) {
+        const members = Array.isArray(rel.members) ? rel.members : [];
+        const outerWithGeom  = members.filter((m: any) => m.role === "outer" && m.geometry?.length >= 3);
+        const outerNoGeom    = members.filter((m: any) => m.role === "outer" && !(m.geometry?.length >= 3));
+        const innerCount     = members.filter((m: any) => m.role === "inner").length;
+        const otherCount     = members.filter((m: any) => m.role !== "outer" && m.role !== "inner").length;
+
+        if (outerWithGeom.length > 0) {
+          relSucceeded++;
+        } else {
+          relSkipped++;
+        }
+
+        console.group(
+          `  relation ${rel.id} "${rel.tags?.name ?? "(unnamed)"}" — ` +
+          `outer: ${outerWithGeom.length} ok / ${outerNoGeom.length} no-geom, ` +
+          `inner: ${innerCount}, other-role: ${otherCount}`
+        );
+        if (outerNoGeom.length > 0) {
+          console.warn(`    ⚠ ${outerNoGeom.length} outer member(s) missing geometry:`,
+            outerNoGeom.map((m: any) => ({ ref: m.ref, role: m.role, geomLen: m.geometry?.length ?? 0 }))
+          );
+        }
+        if (members.length === 0) {
+          console.warn(`    ⚠ relation has no members at all — out body geom may not have returned member geometry`);
+        }
+        console.groupEnd();
+      }
+
+      console.log(`  ─────────────────────────────`);
+      console.log(`  relations succeeded (≥1 outer ring): ${relSucceeded}`);
+      console.log(`  relations skipped   (0 outer rings):  ${relSkipped}`);
+      console.groupEnd();
+    }
+
+    const parsedWaterPolygons: PolygonRing[] = toPolygonRings(waterPolyElems);
+
+    // ── Phase 2: Rivers (waterway=river|canal) ────────────────────────────
+    const riverElems: PolylineElem[] = data.elements
+      .filter(
+        (el: any) =>
+          (el.tags?.waterway === "river" || el.tags?.waterway === "canal") &&
+          el.geometry?.length >= 2
+      )
+      .map((el: any) => ({
+        id: el.id,
+        tags: el.tags,
+        geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
+      }));
+
+    // ── Phase 2: Streams ──────────────────────────────────────────────────
+    const streamElems: PolylineElem[] = data.elements
+      .filter(
+        (el: any) => el.tags?.waterway === "stream" && el.geometry?.length >= 2
+      )
+      .map((el: any) => ({
+        id: el.id,
+        tags: el.tags,
+        geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
+      }));
+
+    // ── Phase 3: Forests (natural=wood + landuse=forest) ─────────────────
+    const forestElems = data.elements.filter(
+      (el: any) => el.tags?.natural === "wood" || el.tags?.landuse === "forest"
+    );
+    const parsedForests: PolygonRing[] = toPolygonRings(forestElems);
+
+    // ── Phase 4: Railways ─────────────────────────────────────────────────
+    const railwayElems: PolylineElem[] = data.elements
+      .filter(
+        (el: any) => el.tags?.railway === "rail" && el.geometry?.length >= 2
+      )
+      .map((el: any) => ({
+        id: el.id,
+        tags: el.tags,
+        geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
+      }));
+
+    // ── Feature counts for console survey ─────────────────────────────────────
+    const els = data.elements as any[];
+    const count = (pred: (el: any) => boolean) => els.filter(pred).length;
+    console.group("OSM Features Available:");
+    console.log(`  buildings:      ${count((e) => !!e.tags?.building)}`);
+    console.log(`  roads/paths:    ${count((e) => !!e.tags?.highway)}`);
+    console.log(`  bridges:        ${count((e) => !!e.tags?.highway && e.tags?.bridge === "yes")}`);
+    console.log(`  railways:       ${count((e) => e.tags?.railway === "rail")}`);
+    console.log(`  water polygons: ${count((e) => e.tags?.natural === "water")}`);
+    console.log(`  rivers:         ${count((e) => e.tags?.waterway === "river")}`);
+    console.log(`  streams:        ${count((e) => e.tags?.waterway === "stream")}`);
+    console.log(`  canals:         ${count((e) => e.tags?.waterway === "canal")}`);
+    console.log(`  dams:           ${count((e) => e.tags?.waterway === "dam")}`);
+    console.log(`  coastline:      ${count((e) => e.tags?.natural === "coastline")}`);
+    console.log(`  forests/woods:  ${count((e) => e.tags?.natural === "wood" || e.tags?.landuse === "forest")}`);
+    console.log(`  grass:          ${count((e) => e.tags?.landuse === "grass")}`);
+    console.log(`  parks:          ${count((e) => e.tags?.leisure === "park")}`);
+    console.log(`  beaches:        ${count((e) => e.tags?.natural === "beach")}`);
+    console.log(`  parking lots:   ${count((e) => e.tags?.landuse === "parking")}`);
+    console.log(`  ─────────────────────────────`);
+    console.log(`  total elements: ${els.length}`);
+    console.groupEnd();
+
+    setBuildings(blds);
+    appendAreas(blds);
+    setRoads(rdElems);
+    setParks(parsedParks);
+    setWaterPolygons(parsedWaterPolygons);
+    setRivers(riverElems);
+    setStreams(streamElems);
+    setForests(parsedForests);
+    setRailways(railwayElems);
+
+    // ── Street details: trees, tram tracks, walls, benches, street lamps ──
+    const polylines = (pred: (t: any) => boolean): PolylineElem[] =>
+      data.elements
+        .filter((el: any) => el.type === "way" && el.tags && pred(el.tags) && el.geometry?.length >= 2)
+        .map((el: any) => ({ id: el.id, tags: el.tags, geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })) }));
+    const points = (pred: (t: any) => boolean): PointElem[] =>
+      data.elements
+        .filter((el: any) => el.type === "node" && el.tags && pred(el.tags))
+        .map((el: any) => ({ id: el.id, lat: el.lat, lon: el.lon, tags: el.tags }));
+    setDetails({
+      trees: points((t) => t.natural === "tree"),
+      treeRows: polylines((t) => t.natural === "tree_row"),
+      tramways: polylines((t) => t.railway === "tram"),
+      walls: polylines((t) => t.barrier === "wall" || t.barrier === "retaining_wall"),
+      benches: points((t) => t.amenity === "bench"),
+      lamps: points((t) => t.highway === "street_lamp"),
+      pois: points((t) => !!(t.name && (POI_AMENITIES.has(t.amenity) || t.shop || POI_TOURISM.has(t.tourism)))),
+    });
+    setHasFetchedBuildings(true);
+  };
+
+  const requestBuildings = async (): Promise<boolean> => {
+    setIsFetchingBuildings(true);
+    setFetchError("");
+    setBuildProgress(0);
+    setBuildStatus("Fetching map data from OpenStreetMap...");
+
+    let p = 0;
+    progressIntervalRef.current = setInterval(() => {
+      p = p + (85 - p) * 0.05;
+      setBuildProgress(p);
+    }, 200);
+
+    const south = areaData[1].lat;
+    const west = areaData[1].lng;
+    const north = areaData[0].lat;
+    const east = areaData[0].lng;
+
     const bbox = `${south},${west},${north},${east}`;
-    const query = `[out:json][timeout:60];(` +
+    const query = `[out:json][timeout:90];(` +
       // ── existing ──────────────────────────────────────
       `way["building"](${bbox});` +
       `relation["building"](${bbox});` +
@@ -279,169 +510,29 @@ function App() {
       // ── infrastructure ────────────────────────────────
       `way["railway"="rail"](${bbox});` +
       `way["landuse"="parking"](${bbox});` +
+      // ── street details ────────────────────────────────
+      `node["natural"="tree"](${bbox});` +
+      `way["natural"="tree_row"](${bbox});` +
+      `way["railway"="tram"](${bbox});` +
+      `way["barrier"="wall"](${bbox});` +
+      `way["barrier"="retaining_wall"](${bbox});` +
+      `node["amenity"="bench"](${bbox});` +
+      `node["highway"="street_lamp"](${bbox});` +
+      `node["amenity"~"^(cafe|restaurant|pub|bar|fast_food|ice_cream|library|place_of_worship|theatre|cinema|arts_centre|community_centre)$"](${bbox});` +
+      `node["shop"](${bbox});` +
+      `node["tourism"~"^(museum|hotel|attraction)$"](${bbox});` +
     `);out body geom;`;
     try {
-      const response = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        body: query,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      });
-      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
-      const data = await response.json();
-
-      const blds: Building[] = data.elements
-        .filter((el: any) => el.tags?.building)
-        .map((element: any) => ({
-          id: element.id,
-          tags: element.tags,
-          geometry: element.geometry
-            ? element.geometry.map((pt: any) => ({ lat: pt.lat, lng: pt.lon }))
-            : undefined,
-        }));
-
-      const rdElems = data.elements
-        .filter((el: any) => el.tags?.highway && el.geometry?.length >= 2)
-        .map((el: any) => ({
-          id: el.id,
-          tags: el.tags,
-          geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
-        }));
-
-      // ── Phase 1: Parks (leisure=park + landuse=grass + natural=grassland) ──
-      const parkElems = data.elements.filter(
-        (el: any) =>
-          el.tags?.leisure === "park" ||
-          el.tags?.landuse === "grass" ||
-          el.tags?.natural === "grassland"
-      );
-      const parsedParks: PolygonRing[] = toPolygonRings(parkElems);
-
-      // ── Phase 1: Water polygons (natural=water) ──────────────────────────
-      const waterPolyElems = data.elements.filter(
-        (el: any) => el.tags?.natural === "water"
-      );
-
-      // ── Diagnostic: water polygon extraction ─────────────────────────────
-      {
-        const waterWays = waterPolyElems.filter((e: any) => e.type === "way");
-        const waterRels = waterPolyElems.filter((e: any) => e.type === "relation");
-        console.group(`Water polygons diagnostic (${waterPolyElems.length} total)`);
-        console.log(`  ways:      ${waterWays.length}`);
-        console.log(`  relations: ${waterRels.length}`);
-
-        let relSucceeded = 0;
-        let relSkipped = 0;
-        for (const rel of waterRels) {
-          const members = Array.isArray(rel.members) ? rel.members : [];
-          const outerWithGeom  = members.filter((m: any) => m.role === "outer" && m.geometry?.length >= 3);
-          const outerNoGeom    = members.filter((m: any) => m.role === "outer" && !(m.geometry?.length >= 3));
-          const innerCount     = members.filter((m: any) => m.role === "inner").length;
-          const otherCount     = members.filter((m: any) => m.role !== "outer" && m.role !== "inner").length;
-
-          if (outerWithGeom.length > 0) {
-            relSucceeded++;
-          } else {
-            relSkipped++;
-          }
-
-          console.group(
-            `  relation ${rel.id} "${rel.tags?.name ?? "(unnamed)"}" — ` +
-            `outer: ${outerWithGeom.length} ok / ${outerNoGeom.length} no-geom, ` +
-            `inner: ${innerCount}, other-role: ${otherCount}`
-          );
-          if (outerNoGeom.length > 0) {
-            console.warn(`    ⚠ ${outerNoGeom.length} outer member(s) missing geometry:`,
-              outerNoGeom.map((m: any) => ({ ref: m.ref, role: m.role, geomLen: m.geometry?.length ?? 0 }))
-            );
-          }
-          if (members.length === 0) {
-            console.warn(`    ⚠ relation has no members at all — out body geom may not have returned member geometry`);
-          }
-          console.groupEnd();
-        }
-
-        console.log(`  ─────────────────────────────`);
-        console.log(`  relations succeeded (≥1 outer ring): ${relSucceeded}`);
-        console.log(`  relations skipped   (0 outer rings):  ${relSkipped}`);
-        console.groupEnd();
-      }
-
-      const parsedWaterPolygons: PolygonRing[] = toPolygonRings(waterPolyElems);
-
-      // ── Phase 2: Rivers (waterway=river|canal) ────────────────────────────
-      const riverElems: PolylineElem[] = data.elements
-        .filter(
-          (el: any) =>
-            (el.tags?.waterway === "river" || el.tags?.waterway === "canal") &&
-            el.geometry?.length >= 2
-        )
-        .map((el: any) => ({
-          id: el.id,
-          tags: el.tags,
-          geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
-        }));
-
-      // ── Phase 2: Streams ──────────────────────────────────────────────────
-      const streamElems: PolylineElem[] = data.elements
-        .filter(
-          (el: any) => el.tags?.waterway === "stream" && el.geometry?.length >= 2
-        )
-        .map((el: any) => ({
-          id: el.id,
-          tags: el.tags,
-          geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
-        }));
-
-      // ── Phase 3: Forests (natural=wood + landuse=forest) ─────────────────
-      const forestElems = data.elements.filter(
-        (el: any) => el.tags?.natural === "wood" || el.tags?.landuse === "forest"
-      );
-      const parsedForests: PolygonRing[] = toPolygonRings(forestElems);
-
-      // ── Phase 4: Railways ─────────────────────────────────────────────────
-      const railwayElems: PolylineElem[] = data.elements
-        .filter(
-          (el: any) => el.tags?.railway === "rail" && el.geometry?.length >= 2
-        )
-        .map((el: any) => ({
-          id: el.id,
-          tags: el.tags,
-          geometry: el.geometry.map((pt: any) => ({ lat: pt.lat, lon: pt.lon })),
-        }));
-
-      // ── Feature counts for console survey ─────────────────────────────────────
-      const els = data.elements as any[];
-      const count = (pred: (el: any) => boolean) => els.filter(pred).length;
-      console.group("OSM Features Available:");
-      console.log(`  buildings:      ${count((e) => !!e.tags?.building)}`);
-      console.log(`  roads/paths:    ${count((e) => !!e.tags?.highway)}`);
-      console.log(`  bridges:        ${count((e) => !!e.tags?.highway && e.tags?.bridge === "yes")}`);
-      console.log(`  railways:       ${count((e) => e.tags?.railway === "rail")}`);
-      console.log(`  water polygons: ${count((e) => e.tags?.natural === "water")}`);
-      console.log(`  rivers:         ${count((e) => e.tags?.waterway === "river")}`);
-      console.log(`  streams:        ${count((e) => e.tags?.waterway === "stream")}`);
-      console.log(`  canals:         ${count((e) => e.tags?.waterway === "canal")}`);
-      console.log(`  dams:           ${count((e) => e.tags?.waterway === "dam")}`);
-      console.log(`  coastline:      ${count((e) => e.tags?.natural === "coastline")}`);
-      console.log(`  forests/woods:  ${count((e) => e.tags?.natural === "wood" || e.tags?.landuse === "forest")}`);
-      console.log(`  grass:          ${count((e) => e.tags?.landuse === "grass")}`);
-      console.log(`  parks:          ${count((e) => e.tags?.leisure === "park")}`);
-      console.log(`  beaches:        ${count((e) => e.tags?.natural === "beach")}`);
-      console.log(`  parking lots:   ${count((e) => e.tags?.landuse === "parking")}`);
-      console.log(`  ─────────────────────────────`);
-      console.log(`  total elements: ${els.length}`);
-      console.groupEnd();
-
-      setBuildings(blds);
-      appendAreas(blds);
-      setRoads(rdElems);
-      setParks(parsedParks);
-      setWaterPolygons(parsedWaterPolygons);
-      setRivers(riverElems);
-      setStreams(streamElems);
-      setForests(parsedForests);
-      setRailways(railwayElems);
-      setHasFetchedBuildings(true);
+      const data = await fetchOverpass(query);
+      // The Blender model only matches the bundled Haga area.
+      useGhostStore.getState().setModelUrl(null);
+      setTerrain(null);
+      loadOsmData(data, south, west, north, east);
+      // Terrain arrives a moment later; the scene is flat until then (or if it fails).
+      const projection = useAreaStore.getState().projection!;
+      fetchTerrainGrid(projection)
+        .then((grid) => setTerrain(grid))
+        .catch((err) => console.warn("Terrain unavailable – using flat ground.", err));
 
       clearInterval(progressIntervalRef.current!);
       progressIntervalRef.current = null;
@@ -479,8 +570,41 @@ function App() {
   };
 
   const handleClickPrevStep = () => {
-    setStep(step - 1);
+    // From the 3D view, go straight back to area selection.
+    setStep(step === 2 ? 0 : step - 1);
   };
+
+  const loadHagaDemo = async () => {
+    setHagaError("");
+    try {
+      const res = await fetch(HAGA_SNAPSHOT_URL);
+      if (!res.ok) throw new Error(`${HAGA_SNAPSHOT_URL} svarade ${res.status}`);
+      const data = await res.json();
+      const { south, west, north, east } = data._bbox;
+      // Load terrain first so the scene is built once, already on the terrain.
+      const terrainRes = await fetch(HAGA_TERRAIN_URL).catch(() => null);
+      const grid = terrainRes?.ok ? await terrainRes.json() : null;
+      loadOsmData(data, south, west, north, east);
+      const projection = useAreaStore.getState().projection!;
+      setTerrain(grid ? withBase(grid, projection) : null);
+      useGhostStore.getState().setModelUrl(HAGA_MODEL_URL);
+      setCenter([{ lat: north, lng: east }, { lat: south, lng: west }]);
+      setStep(2);
+      // The demo opens straight into the ghost meter.
+      useGhostStore.getState().setGhostMode(true);
+    } catch (err) {
+      console.error("Could not load Haga snapshot", err);
+      setHagaError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  useGhostFeed();
+  useWeatherFeed();
+  useOpenDataFeed();
+
+  useEffect(() => {
+    loadHagaDemo();
+  }, []);
 
   const handleClickExport = () => {
     setIsExportModal(true);
@@ -614,8 +738,19 @@ function App() {
         </Column>
       </FullscreenModal>
 
-      <PrevButton isShow={step !== 0 && !isFetchingBuildings} onClick={handleClickPrevStep}>
-        <ChevronLeft css={IconSize} /> Prev Step
+      <Modal isOpen={!!hagaError} onClose={() => setHagaError("")}>
+        <Column gap="0.5rem">
+          <Title>Haga kunde inte laddas</Title>
+          <Description>{hagaError}</Description>
+          <Button isShow={true} onClick={loadHagaDemo}>
+            Försök igen
+          </Button>
+        </Column>
+      </Modal>
+
+      {/* The demo stays in Haga: no "new area" or export buttons in the 3D view */}
+      <PrevButton isShow={step === 1 && !isFetchingBuildings} onClick={handleClickPrevStep}>
+        <ChevronLeft css={IconSize} /> {step === 2 ? "Välj nytt område" : "Prev Step"}
       </PrevButton>
 
       <NextButton
@@ -626,7 +761,11 @@ function App() {
         Generate <ChevronRight css={IconSize} />
       </NextButton>
 
-      <NextButton isShow={step == 2} onClick={handleClickExport}>
+      <NextButton
+        isShow={false}
+        onClick={handleClickExport}
+        style={ghostMode ? { right: "calc(380px + 2.5rem)" } : undefined}
+      >
         Export GLB <Download css={IconSize} />
       </NextButton>
 
@@ -692,6 +831,12 @@ function App() {
           ))}
         </Column>
       </Modal>
+
+      {step === 2 && ghostMode && <GhostPanel />}
+      {step === 2 && ghostMode && !walking && <IntroCard />}
+      {step === 2 && <WalkHud ghostMode={ghostMode} />}
+      {step === 2 && <ClockWeather ghostMode={ghostMode} />}
+      {step === 2 && ghostMode && <GhostMeter />}
 
       <Space></Space>
     </div>

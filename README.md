@@ -1,128 +1,93 @@
-# Mapforge
+# 👻 GHOST PULSE – Paranormal Activity Monitoring System
 
-Generate real-world 3D city assets from any location on Earth. Type a city name, select an area, and export a game-ready GLB file in seconds — powered by OpenStreetMap data and React Three Fiber.
+En levande 3D-spökkarta över Haga i Göteborg, byggd som en Halloween-demo av hur man kan
+visualisera data i en egenbyggd digital tvilling – med öppen kartdata, öppen realtidsdata
+och AI som utvecklingsassistent.
 
-Built for game developers, architects, urban planners, and anyone who needs real-world geometry without the manual modeling work.
+![GHOST PULSE](docs/screenshots/oppna-data-ghost.png)
 
-![Sacramento Capitol District rendered in Blender](docs/sacramento_final2.png)
+> **Verklig data** (turkos i gränssnittet) blandas med **fiktiv spökdata** (lila/orange).
+> Det står alltid tydligt vad som är vad.
 
----
+## Vad man ser
 
-## What It Does
-
-Mapforge turns real geographic data into production-ready 3D assets:
-
-- **Search any city** by name — no coordinates required
-- **Select your area** using a resizable, draggable bounding box
-- **Rotate the map** to align your selection with any building orientation
-- **Generate a 3D scene** with buildings, roads, and pedestrian paths from live OSM data
-- **Export as GLB** — ready to open in Blender, Unity, Unreal Engine, or Godot
-
----
-
-## Features
-
-### Map Selection
-- **City name search** — geocoded via Nominatim, auto-centers and draws selection box on result
-- **Size presets** — Small (~¼ mi), Medium (~1 mi), Large (~4 mi) bounding box quick-set buttons
-- **Free drag** — click and drag the selection box to reposition without redrawing
-- **Map rotation** — align the underlying map to any bearing using Shift+scroll or the compass drag handle, leaving the selection box fixed on screen
-- **Tile buffering** — extended tile preload prevents grey areas when rotating
-
-### 3D Generation
-- **Buildings** — extruded from OSM footprints with real height data where available
-- **Roads** — rendered as width-accurate ribbon meshes by highway type (motorway, residential, footway, etc.)
-- **Pedestrian paths** — distinct material tier, thinner geometry, visually separate from vehicle roads
-- **Shared materials** — buildings, roads, and paths each use a single shared material instance (not one per mesh), keeping file sizes small and draw calls efficient
-
-### GLB Export
-- **Clean export pipeline** — all geometry confirmed exportable via `userData.exportToGLB`
-- **Road export fix** — `useEffect` pattern writes directly to Three.js mesh userData, bypassing R3F reconciler deferral that previously caused road meshes to be omitted
-- **Road clipping** — meshes whose center point falls outside the bounding box are excluded, preventing stray geometry in tight selections
-- **3 material slots** — buildings (warm stone), roads (dark asphalt), paths (tan) — consolidates cleanly in any 3D application
-
----
-
-## Improvements Over Original (cartesiancs/map3d)
-
-This fork extends the original map3d with the following additions:
-
-| Feature | Original | Mapforge |
+| Lager | Källa | Typ |
 |---|---|---|
-| Location input | Coordinates only | City name search |
-| Bounding box | Fixed | S/M/L presets + draggable |
-| Map rotation | None | Shift+scroll + compass drag |
-| Road rendering | Basic line primitives | Width-accurate ribbon meshes |
-| Pedestrian paths | Not rendered | Distinct material + geometry |
-| Material count | 1 per mesh | 3 shared instances |
-| Road export | Missing (R3F deferral bug) | Fixed via useEffect |
-| Road clipping | None | Center-point bbox filter |
+| Byggnader, tak, gator, träd, spårväg, lyktor, kaféer | OpenStreetMap | Verklig |
+| Terräng (Skansen Kronan på sitt berg) | AWS Terrain Tiles | Verklig |
+| Väder: regn, snö, dimma, moln, vind, sol | SMHI (live) | Verklig |
+| Luftsensorer (PM2.5/PM10) | Sensor.community (live) | Verklig |
+| Historiska platser | Wikipedia | Verklig |
+| Månens läge och fas | Beräknad | Verklig |
+| Spöksensorer, irrbloss, spökflöden | Simulering i webbläsaren | **Fiktiv** |
+| Varulvsdetektor (ljudsensor) | Simulering – styrd av verklig måne och vind | **Fiktiv** |
+| Gastar | Dekoration | – |
 
----
+Funktioner: Ghost Mode, gåläge på gatunivå (WASD/klick), handhållen spökmätare,
+klickbara hus med historia och "vad finns i huset", händelselogg, syntetiskt varulvsylande.
 
-## Tech Stack
-
-- **React + Vite + TypeScript**
-- **React Three Fiber** — 3D scene rendering
-- **Three.js** — geometry, materials, GLB export
-- **Leaflet + leaflet-rotate** — 2D map selection with bearing control
-- **OpenStreetMap / Overpass API** — building and road data
-- **Nominatim** — city name geocoding
-
----
-
-## Getting Started
+## Kom igång lokalt
 
 ```bash
-git clone https://github.com/stonyp/mapforge
-cd mapforge
 npm install
-npm run dev
+npm run dev            # http://localhost:5173
 ```
 
-Open `http://localhost:5173` in your browser.
+Tester (körs utan nätverk, Node 24+):
 
----
+```bash
+npm run test:sim       # spöksimulering, irrbloss, flöden, varulvsdetektor
+npm run test:weather   # SMHI-tolkning, sol
+npm run test:streets   # gatunätet i Haga
+npm run test:walk      # kollision i gåläget
+npm run test:opendata  # måne, luftsensorer, Wikipedia
+```
 
-## Usage
+## Publicera med Coolify
 
-1. **Search** — type a city name and press Enter or click Search
-2. **Resize** — use S/M/L buttons to set the selection area, or drag the box to reposition
-3. **Rotate** — hold Shift and scroll to rotate the map; drag the compass for fine control
-4. **Generate** — click Generate to fetch OSM data and build the 3D scene
-5. **Export** — click Export GLB to download the scene file
+Appen är helt statisk (ingen backend, inga API-nycklar). Den byggs till en liten
+nginx-image med `Dockerfile` och `nginx.conf` i repot:
 
-### Importing into Blender
-- Use **Blender 4.3 LTS** — the glTF importer in Blender 5.x has a known regression with certain mesh attribute layouts
-- File → Import → glTF 2.0 (.glb/.gltf)
-- Set Clip End to 100000 in the viewport N panel → View tab if geometry disappears
+1. Lägg koden i ett eget GitHub-repo.
+2. I Coolify: **New Resource → Application → (Private/Public) Git repository**.
+3. Välj repot och grenen, **Build Pack: Dockerfile**, port **80**.
+4. Ange domän (t.ex. `ghostpulse.dindomän.se`) och tryck **Deploy**.
 
-### Importing into Unity / Unreal / Godot
-- GLB imports natively in all three engines
-- Coordinate system: Three.js Y-up — Blender converts automatically; Unity and Unreal may require a 90° X rotation on import
+Testerna körs i bygget – går något sönder publiceras det inte. Hälsokontroll: `/healthz`.
 
----
+Prova imagen lokalt: `docker build -t ghost-pulse . && docker run -p 8080:80 ghost-pulse`
+→ http://localhost:8080
 
-## Roadmap
+## Så byggdes det
 
-- [ ] Free corner resize handles on selection box
-- [ ] Terrain / heightmap support
-- [ ] Water bodies (rivers, lakes)
-- [ ] Procedural textures by building type
-- [ ] LOD export variants
-- [ ] Auth + saved map library (Supabase)
-- [ ] Billing tiers — free watermarked / pro clean export (Stripe)
+- **Grund:** [Mapforge](https://github.com/stonyp/mapforge) (MIT) – React, TypeScript, Vite,
+  Three.js och React Three Fiber. Mapforge hämtar OSM-data och bygger 3D-geometri.
+- **Utvecklat med Claude Code** som AI-utvecklare: tak från OSM-taggar, procedurella fönster
+  och kullersten, terräng, väder, gåläge, simuleringsmotor och gränssnitt.
+- **Blender via MCP:** stadsmodellen exporterades som GLB, gjordes kusligare i Blender
+  (upplysta fönster, nattmaterial, pumpor, namngivna sensorpositioner) och lästes in igen.
+  Se [blender/README.md](blender/README.md).
 
----
+## Så fungerar spökdatan
 
-## Credits
+`src/ghost/simulation.ts` genererar nya mätvärden var femte sekund:
 
-- Original project: [cartesiancs/map3d](https://github.com/cartesiancs/map3d)
-- Map data: © [OpenStreetMap](https://www.openstreetmap.org/) contributors
-- Built by [stonyp](https://github.com/stonyp)
+- **Energi** = platsens grundnivå + långsam våg + "spöktimme" + brus + händelser.
+- **Grundnivån** höjs av verklig historia (Wikipedia-platser i närheten) och månljus.
+- **Händelser** (temperaturfall, ektoplasma, skuggrörelse, viskningar, manifestation)
+  ger kraftiga utslag och kan sprida sig till grannsensorer.
+- **Irrbloss** vandrar längs de verkliga gatorna mot heta sensorer och höjer energin där de passerar.
+- **Varulvsylanden** blir vanligare ju fullare den verkliga månen är; vinden från SMHI ger mikrofonbrus.
 
----
+Datakällan ligger bakom ett gränssnitt (`GhostDataSource`) och kan bytas mot ett riktigt API.
 
-## License
+## Licenser och källor
 
-MIT
+- Kod: MIT (Mapforge © stonyp/AIssacArt, tillägg i samma licens)
+- Kartdata © [OpenStreetMap-bidragsgivare](https://www.openstreetmap.org/copyright) (ODbL)
+- Väder: [SMHI](https://www.smhi.se/data) (CC BY 4.0)
+- Luft: [Sensor.community](https://sensor.community) (ODbL/DbCL)
+- Historia: [Wikipedia](https://sv.wikipedia.org) (CC BY-SA 4.0)
+- Höjddata: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
+
+Originalets README finns i [docs/MAPFORGE-README.md](docs/MAPFORGE-README.md).

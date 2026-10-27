@@ -1,21 +1,42 @@
 import { useEffect, useRef, useMemo, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { useAreaStore } from "@/state/areaStore";
-import { Html, Sky, Environment } from "@react-three/drei";
+import { Html } from "@react-three/drei";
+import { create } from "zustand";
 import * as THREE from "three";
 import { useActionStore } from "@/state/exportStore";
 import { GLTFExporter } from "three/examples/jsm/Addons.js";
-import Car from "./Car";
+import { CameraControls } from "./CameraControls";
+import { WalkControls } from "@/walk/WalkControls";
+import { useWalkStore } from "@/walk/walkStore";
 import instanceFleet from "@/api/axios";
+import { footprintToShape } from "./geo";
+import { buildRoadShape, clipPolylineToBbox, type LatLon } from "./polyline";
+import { buildBuildingGeometry } from "./roofs";
+import { applyFacadeShader, applySettShader, setFacadeNight } from "./surfaceShaders";
+import { DETAIL_GHOST_THEME, StreetDetails } from "./StreetDetails";
+import { DayLighting, WeatherEffects } from "@/weather/WeatherEffects";
+import { OpenDataScene } from "@/opendata/OpenDataScene";
+import { buildingPlacement, drapeGeometry, groundAtWorld } from "./terrain";
+import { TessellateModifier } from "three/examples/jsm/modifiers/TessellateModifier.js";
+import { useGhostStore } from "@/ghost/ghostStore";
+import { GhostScene } from "@/ghost/GhostScene";
+import { BuildingCard, type BuildingInfo } from "./BuildingCard";
 
 const ROAD_MAT = new THREE.MeshStandardMaterial({ color: "#3d3d3d" });
 const PATH_MAT = new THREE.MeshStandardMaterial({ color: "#888888" });
-const BUILDING_MAT = new THREE.MeshStandardMaterial({ color: "#9da0a3" });
+// Buildings carry their own facade/roof colours as vertex colours (see roofs.ts);
+// the material colour acts as a tint (white by day, dark blue in Ghost Mode).
+const BUILDING_MAT = new THREE.MeshStandardMaterial({ color: "#ffffff", vertexColors: true, roughness: 0.85 });
+applyFacadeShader(BUILDING_MAT);
+// Cobblestone streets (OSM surface=sett / paving_stones)
+const SETT_MAT = new THREE.MeshStandardMaterial({ color: "#8f887d", roughness: 0.95 });
+applySettShader(SETT_MAT);
 const BUILDING_ACTIVE_MAT = new THREE.MeshStandardMaterial({ color: "#007bff" });
 // Opaque ground material used in GLB export
 const GROUND_MAT = new THREE.MeshStandardMaterial({ color: "#888888", roughness: 1, metalness: 0 });
 // Ghost version shown in the browser preview — same colour, barely visible
-const GROUND_PREVIEW_MAT = new THREE.MeshStandardMaterial({ color: "#888888", roughness: 1, metalness: 0, transparent: true, opacity: 0.15, depthWrite: false });
+const GROUND_PREVIEW_MAT = new THREE.MeshStandardMaterial({ color: "#a9a59b", roughness: 1, metalness: 0, transparent: true, opacity: 0.95, depthWrite: false });
 
 // ── New feature materials ──────────────────────────────────────────────────
 const PARK_MAT    = new THREE.MeshStandardMaterial({ color: "#4a7c59", roughness: 1, metalness: 0 });
@@ -23,6 +44,36 @@ const WATER_MAT   = new THREE.MeshStandardMaterial({ color: "#2c5f7a", roughness
 const FOREST_MAT  = new THREE.MeshStandardMaterial({ color: "#2d5a27", roughness: 1, metalness: 0 });
 const RAILWAY_MAT = new THREE.MeshStandardMaterial({ color: "#2a2a2a", roughness: 1, metalness: 0 });
 const PILLAR_MAT  = new THREE.MeshStandardMaterial({ color: "#5a5a5a", roughness: 0.8, metalness: 0 });
+
+// ── Ghost Mode theme ───────────────────────────────────────────────────────
+// The shared materials are recoloured in place, so every mesh switches theme
+// without re-rendering. Original colours are restored when Ghost Mode is off.
+const GHOST_THEME: Array<[THREE.MeshStandardMaterial, string, string?]> = [
+  [BUILDING_MAT,        "#5a6194", "#0a0820"],
+  [BUILDING_ACTIVE_MAT, "#8b5cf6", "#4c1d95"],
+  [ROAD_MAT,            "#1d2142"],
+  [PATH_MAT,            "#2c2552"],
+  [SETT_MAT,            "#2a2446"],
+  [GROUND_PREVIEW_MAT,  "#080914"],
+  [PARK_MAT,            "#123a33", "#04120f"],
+  [WATER_MAT,           "#143070", "#0a1a4a"],
+  [FOREST_MAT,          "#0f2e22"],
+  [RAILWAY_MAT,         "#1b1b33"],
+  [PILLAR_MAT,          "#2e3260"],
+  ...DETAIL_GHOST_THEME,
+];
+const DAY_THEME = GHOST_THEME.map(([m]) => [m, "#" + m.color.getHexString(), "#" + m.emissive.getHexString()] as const);
+const DAY_GROUND_OPACITY = GROUND_PREVIEW_MAT.opacity;
+
+function applyGhostTheme(on: boolean) {
+  const theme = on ? GHOST_THEME : DAY_THEME;
+  for (const [mat, color, emissive] of theme) {
+    mat.color.set(color);
+    mat.emissive.set(emissive ?? "#000000");
+  }
+  GROUND_PREVIEW_MAT.opacity = on ? 0.96 : DAY_GROUND_OPACITY;
+  setFacadeNight(on);
+}
 
 // ── Y offsets (scene units) ────────────────────────────────────────────────
 const BRIDGE_Y           =  3.0;
@@ -40,302 +91,100 @@ const RAILWAY_HALF_WIDTH = 0.8;
 // ── Flat extrude settings (thin slab for ground-level polygons) ────────────
 const FLAT_EXTRUDE = { steps: 1, depth: 0.05, bevelEnabled: false } as const;
 
+// Only one building info card is pinned at a time. It closes with its × button,
+// by clicking empty space (Canvas onPointerMissed) or by pressing Escape.
+const useBuildingSelection = create<{
+  key: string | null;
+  pos: THREE.Vector3 | null;
+  /** CSS transform that keeps the card on screen (chosen from where you clicked). */
+  placement: string;
+  /** Building under the pointer (overview only) – drawn as an outline. */
+  hoverKey: string | null;
+  select: (key: string | null, pos?: THREE.Vector3 | null, screen?: { x: number; y: number }) => void;
+  setHover: (key: string | null) => void;
+}>((set) => ({
+  key: null,
+  pos: null,
+  hoverKey: null,
+  placement: "translate(-50%, calc(-100% - 14px))",
+  setHover: (hoverKey) => set({ hoverKey }),
+  select: (key, pos = null, screen) => {
+    let placement = "translate(-50%, calc(-100% - 14px))"; // above the point
+    if (screen) {
+      const below = screen.y < window.innerHeight * 0.5;
+      const x = screen.x < 360 ? "-10%" : screen.x > window.innerWidth - 360 ? "-90%" : "-50%";
+      placement = below ? `translate(${x}, 24px)` : `translate(${x}, calc(-100% - 14px))`;
+    }
+    set({ key, pos, placement });
+  },
+}));
+
+const HOVER_EDGE_MAT = new THREE.LineBasicMaterial({ color: "#22d3ee", transparent: true, opacity: 0.9, depthTest: false });
+
+/**
+ * Outline of the hovered and the selected building. Rendered outside the
+ * building group so it also shows when the Blender model replaces the buildings.
+ */
+function BuildingOutlines({ items }: { items: Array<{ key: string; geometry: THREE.BufferGeometry }> }) {
+  const hoverKey = useBuildingSelection((s) => s.hoverKey);
+  const selectedKey = useBuildingSelection((s) => s.key);
+  const keys = [...new Set([hoverKey, selectedKey].filter(Boolean))] as string[];
+  const edges = useMemo(
+    () => keys.map((k) => items.find((i) => i.key === k)).filter(Boolean).map((i) => new THREE.EdgesGeometry(i!.geometry, 25)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keys.join(","), items]
+  );
+  useEffect(() => () => edges.forEach((e) => e.dispose()), [edges]);
+  return <>{edges.map((g, i) => <lineSegments key={i} geometry={g} material={HOVER_EDGE_MAT} renderOrder={3} raycast={() => null} />)}</>;
+}
+
 function Building({
-  shape,
-  extrudeSettings,
-  tags,
+  id,
+  geometry,
+  info,
 }: {
-  shape: THREE.Shape;
-  extrudeSettings: any;
-  tags: any;
+  id: string;
+  geometry: THREE.BufferGeometry;
+  info: BuildingInfo;
 }) {
-  const [hovered, setHovered] = useState(false);
-  const [clicked, setClicked] = useState(false);
-  const [hoverPos, setHoverPos] = useState<THREE.Vector3 | null>(null);
-  const [showTranslations, setShowTranslations] = useState(false);
-  const [showAdditionalInfo, setShowAdditionalInfo] = useState(false);
+  // At street level hovering walls would flicker constantly – only hover in the overview.
+  const overview = useWalkStore((s) => s.mode === "orbit");
+  const clicked = useBuildingSelection((s) => s.key === id);
+  const pinnedPos = useBuildingSelection((s) => (s.key === id ? s.pos : null));
+  const placement = useBuildingSelection((s) => s.placement);
+  const select = useBuildingSelection((s) => s.select);
+  const setHover = useBuildingSelection((s) => s.setHover);
+
   return (
     <mesh
       onPointerOver={(e) => {
-        setHovered(true);
         e.stopPropagation();
+        if (!overview) return;
+        setHover(id);
+        document.body.style.cursor = "pointer";
       }}
       onPointerOut={(e) => {
-        setHovered(false);
         e.stopPropagation();
-      }}
-      onPointerMove={(e) => {
-        setHoverPos(e.point.clone());
-        e.stopPropagation();
+        if (useBuildingSelection.getState().hoverKey === id) setHover(null);
+        document.body.style.cursor = "";
       }}
       onClick={(e) => {
-        setClicked(!clicked);
+        select(clicked ? null : id, e.point.clone(), { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY });
         e.stopPropagation();
       }}
-      rotation={[-Math.PI / 2, 0, 0]}
-      material={hovered || clicked ? BUILDING_ACTIVE_MAT : BUILDING_MAT}
+      geometry={geometry}
+      material={clicked ? BUILDING_ACTIVE_MAT : BUILDING_MAT}
       userData={{ exportToGLB: true }}
     >
-      <extrudeGeometry args={[shape, extrudeSettings]} />
-      {(hovered || clicked) && hoverPos && (
-        <Html position={[hoverPos.x, hoverPos.y + extrudeSettings.depth + 0.5, hoverPos.z]} center>
-          <div
-            role="dialog"
-            aria-label={tags.name || "Building Information"}
-            style={{
-              color: "#000000",
-              backgroundColor: "#ffffff96",
-              backdropFilter: "blur(8px)",
-              border: "none",
-              padding: "14px",
-              borderRadius: "10px",
-              fontFamily: "system-ui, -apple-system, sans-serif",
-              fontSize: "13px",
-              width: "200px",
-              boxShadow: "0 2px 14px rgba(0, 0, 0, 0.16)",
-              transition: "all 0.2s ease-in-out",
-            }}
-          >
-            <div
-              style={{
-                fontWeight: "600",
-                fontSize: "15px",
-                borderBottom: tags.name ? "1px solid rgba(0, 0, 0, 0.08)" : "none",
-                paddingBottom: tags.name ? "6px" : "0",
-                marginBottom: tags.name ? "8px" : "4px",
-              }}
-            >
-              {tags.name || "Building Information"}
-            </div>
-            {["building", "height", "building:levels", "amenity", "denomination"].map(
-              (key) =>
-                tags[key] &&
-                (key !== "building" || tags[key] !== "yes") && (
-                  <div
-                    key={key}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      margin: "4px 0",
-                    }}
-                  >
-                    <span style={{ fontWeight: "500", color: "#5f6368" }}>
-                      {key === "building"
-                        ? "Type"
-                        : key === "height"
-                        ? "Height"
-                        : key === "building:levels"
-                        ? "Levels"
-                        : key === "amenity"
-                        ? "Facility"
-                        : key === "denomination"
-                        ? "Denomination"
-                        : key.replace(/_/g, " ")}
-                      :
-                    </span>
-                    <span style={{ textTransform: "capitalize" }}>
-                      {key === "height" ? `${tags[key]} m` : tags[key]}
-                    </span>
-                  </div>
-                )
-            )}
-            {[
-              "addr:street",
-              "addr:housenumber",
-              "addr:district",
-              "addr:city",
-              "addr:postcode",
-            ].some((key) => tags[key]) && (
-              <div
-                style={{
-                  margin: "10px 0 8px",
-                  borderTop: "1px solid rgba(0, 0, 0, 0.08)",
-                  paddingTop: "8px",
-                }}
-              >
-                <div style={{ fontWeight: "500", marginBottom: "4px", color: "#5f6368" }}>
-                  Address
-                </div>
-                <div style={{ marginLeft: "4px", fontSize: "12px", color: "#5f6368" }}>
-                  {[
-                    [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" "),
-                    tags["addr:district"],
-                    tags["addr:city"],
-                    tags["addr:postcode"],
-                  ]
-                    .filter(Boolean)
-                    .join(", ")}
-                </div>
-              </div>
-            )}
-            {Object.entries(tags).filter(
-              ([key]) =>
-                ![
-                  "building",
-                  "name",
-                  "height",
-                  "building:levels",
-                  "source",
-                  "amenity",
-                  "denomination",
-                ].includes(key) &&
-                !key.startsWith("addr:") &&
-                !key.startsWith("name:") &&
-                !key.startsWith("alt_name:")
-            ).length > 0 && (
-              <div
-                style={{
-                  margin: "10px 0 4px",
-                  borderTop: "1px solid rgba(0, 0, 0, 0.08)",
-                  paddingTop: "8px",
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: "500",
-                    marginBottom: "4px",
-                    color: "#5f6368",
-                    cursor: "pointer",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                  onClick={() => setShowAdditionalInfo(!showAdditionalInfo)}
-                >
-                  Additional Information
-                  <span>{showAdditionalInfo ? "▲" : "▼"}</span>
-                </div>
-                {showAdditionalInfo && (
-                  <div>
-                    {Object.entries(tags)
-                      .filter(
-                        ([key]) =>
-                          ![
-                            "building",
-                            "name",
-                            "height",
-                            "building:levels",
-                            "source",
-                            "amenity",
-                            "denomination",
-                          ].includes(key) &&
-                          !key.startsWith("addr:") &&
-                          !key.startsWith("name:") &&
-                          !key.startsWith("alt_name:")
-                      )
-                      .map(([key, value]) => {
-                        if (
-                          key === "description" ||
-                          (typeof value === "string" && value.length > 80)
-                        ) {
-                          return (
-                            <div key={key} style={{ margin: "8px 0" }}>
-                              <div
-                                style={{ fontWeight: "500", color: "#5f6368", marginBottom: "4px" }}
-                              >
-                                {key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ")}
-                              </div>
-                              <div
-                                style={{
-                                  textAlign: "left",
-                                  fontSize: "12px",
-                                  color: "#5f6368",
-                                  fontWeight: "400",
-                                  textWrap: "wrap",
-                                  whiteSpace: "pre-wrap",
-                                  lineHeight: "1.4",
-                                  backgroundColor: "rgba(0,0,0,0.02)",
-                                  padding: "6px 8px",
-                                  borderRadius: "4px",
-                                }}
-                              >
-                                {String(value)}
-                              </div>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div
-                            key={key}
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              margin: "4px 0",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontWeight: "700",
-                                color: "#5f6368",
-                                textAlign: "left",
-                              }}
-                            >
-                              {key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ")}:
-                            </span>
-                            <span
-                              style={{
-                                textTransform: "capitalize",
-                                fontWeight: "400",
-                                textAlign: "right",
-                              }}
-                            >
-                              {String(value)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-              </div>
-            )}
-            {Object.entries(tags).filter(([key]) => key.startsWith("name:")).length > 0 && (
-              <div
-                style={{
-                  margin: "10px 0 4px",
-                  borderTop: "1px solid rgba(0, 0, 0, 0.08)",
-                  paddingTop: "8px",
-                  textAlign: "right",
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: "500",
-                    marginBottom: "4px",
-                    color: "#5f6368",
-                    cursor: "pointer",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                  onClick={() => setShowTranslations(!showTranslations)}
-                >
-                  Name Translations
-                  <span>{showTranslations ? "▲" : "▼"}</span>
-                </div>
-                {showTranslations && (
-                  <div>
-                    {Object.entries(tags)
-                      .filter(([key]) => key.startsWith("name:"))
-                      .map(([key, value]) => (
-                        <div
-                          key={key}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            margin: "4px 0",
-                          }}
-                        >
-                          <span style={{ fontWeight: "500", color: "#5f6368" }}>
-                            {key.replace("name:", "").toUpperCase()}:
-                          </span>
-                          <span style={{ textTransform: "capitalize" }}>{String(value)}</span>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+      {clicked && pinnedPos && (
+        <Html
+          position={[pinnedPos.x, pinnedPos.y + 0.5, pinnedPos.z]}
+          // above the clock/intro panels (≈1500) but below the top bar (2000)
+          zIndexRange={[1600, 1500]}
+          // Next to the clicked point (above or below, nudged inwards near the edges) – never covering it.
+          style={{ transform: placement }}
+        >
+          <BuildingCard info={info} onClose={() => select(null)} />
         </Html>
       )}
     </mesh>
@@ -365,7 +214,7 @@ const ROAD_HALF_WIDTH: Record<string, number> = {
   unclassified: 1.8,
   service: 1.2,
   // Pedestrian / non-vehicle — narrow
-  pedestrian: 0.5,
+  pedestrian: 2.2, // pedestrian streets such as Haga Nygata are full-width streets
   footway: 0.4,
   cycleway: 0.4,
   path: 0.35,
@@ -373,41 +222,6 @@ const ROAD_HALF_WIDTH: Record<string, number> = {
   steps: 0.3,
 };
 const DEFAULT_ROAD_HALF_WIDTH = 1.5;
-
-// Build a flat ribbon THREE.Shape from a projected 2-D polyline.
-// Returns null if the polyline is degenerate.
-function buildRoadShape(pts: THREE.Vector2[], halfW: number): THREE.Shape | null {
-  const left: THREE.Vector2[] = [];
-  const right: THREE.Vector2[] = [];
-
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-6) continue;
-    // Perpendicular unit vector (90° CCW)
-    const nx = (-dy / len) * halfW;
-    const ny = (dx / len) * halfW;
-
-    if (left.length === 0) {
-      left.push(new THREE.Vector2(a.x + nx, a.y + ny));
-      right.push(new THREE.Vector2(a.x - nx, a.y - ny));
-    }
-    left.push(new THREE.Vector2(b.x + nx, b.y + ny));
-    right.push(new THREE.Vector2(b.x - nx, b.y - ny));
-  }
-
-  if (left.length < 2) return null;
-
-  const shape = new THREE.Shape();
-  shape.moveTo(left[0].x, left[0].y);
-  for (let i = 1; i < left.length; i++) shape.lineTo(left[i].x, left[i].y);
-  for (let i = right.length - 1; i >= 0; i--) shape.lineTo(right[i].x, right[i].y);
-  shape.closePath();
-  return shape;
-}
 
 const ROAD_EXTRUDE = { steps: 1, depth: 0.1, bevelEnabled: false } as const;
 
@@ -577,88 +391,24 @@ function buildPolygonShapeClipped(
   return new THREE.Shape(pts);
 }
 
-// ── Polyline clipping ─────────────────────────────────────────────────────────
+// Flat features are subdivided before being draped over the terrain, so long
+// edges follow the ground instead of cutting through hills.
+const TESSELLATOR = new TessellateModifier(5, 5);
 
-/**
- * Liang-Barsky parametric segment clip against an axis-aligned rectangle.
- * Works in any 2-D coordinate system (lat/lon here).
- * Returns [x0,y0, x1,y1] of the clipped segment, or null if fully outside.
- */
-function clipSegment(
-  x0: number, y0: number,
-  x1: number, y1: number,
-  xmin: number, ymin: number,
-  xmax: number, ymax: number
-): [number, number, number, number] | null {
-  let t0 = 0, t1 = 1;
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-
-  const clip = (p: number, q: number): boolean => {
-    if (p === 0) return q >= 0;        // parallel edge — outside if q < 0
-    const r = q / p;
-    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
-    else       { if (r < t0) return false; if (r < t1) t1 = r; }
-    return true;
-  };
-
-  if (
-    !clip(-dx, x0 - xmin) ||
-    !clip( dx, xmax - x0) ||
-    !clip(-dy, y0 - ymin) ||
-    !clip( dy, ymax - y0)
-  ) return null;
-
-  return [x0 + t0 * dx, y0 + t0 * dy, x0 + t1 * dx, y0 + t1 * dy];
-}
-
-type LatLon = { lat: number; lon: number };
-
-/**
- * Clips a lat/lon polyline to the given bounding box.
- * Returns one or more contiguous sub-polylines (a road crossing a bbox corner
- * may produce two separate segments).
- */
-function clipPolylineToBbox(
-  pts: LatLon[],
-  minLat: number, maxLat: number,
-  minLng: number, maxLng: number
-): LatLon[][] {
-  const result: LatLon[][] = [];
-  let current: LatLon[] = [];
-
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i];
-    const p1 = pts[i + 1];
-    const seg = clipSegment(
-      p0.lon, p0.lat, p1.lon, p1.lat,
-      minLng, minLat, maxLng, maxLat
-    );
-    if (!seg) {
-      if (current.length >= 2) result.push(current);
-      current = [];
-      continue;
-    }
-    const [x0, y0, x1, y1] = seg;
-    const cp0: LatLon = { lat: y0, lon: x0 };
-    const cp1: LatLon = { lat: y1, lon: x1 };
-
-    if (current.length === 0) {
-      current.push(cp0, cp1);
-    } else {
-      const last = current[current.length - 1];
-      // If the clipped start equals the last accumulated point, extend;
-      // otherwise the segment was clipped at entry — start a new chain.
-      if (Math.abs(last.lat - cp0.lat) < 1e-10 && Math.abs(last.lon - cp0.lon) < 1e-10) {
-        current.push(cp1);
-      } else {
-        result.push(current);
-        current = [cp0, cp1];
-      }
-    }
-  }
-  if (current.length >= 2) result.push(current);
-  return result;
+/** Extrudes a flat (rotated -90° X) shape and lays it onto the terrain. */
+function useDrapedExtrude(shape: THREE.Shape, settings: THREE.ExtrudeGeometryOptions) {
+  const terrain = useAreaStore((state) => state.terrain);
+  const projection = useAreaStore((state) => state.projection);
+  const geometry = useMemo(() => {
+    const flat = new THREE.ExtrudeGeometry(shape, settings);
+    if (!terrain || !projection) return flat;
+    const fine = TESSELLATOR.modify(flat);
+    flat.dispose();
+    // Local (x, y, z) of a mesh rotated -90° around X is world (x, z, -y).
+    return drapeGeometry(fine, terrain, projection, (x, y) => [x, -y], "z");
+  }, [shape, settings, terrain, projection]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return geometry;
 }
 
 function RoadMesh({
@@ -671,19 +421,16 @@ function RoadMesh({
   yPos?: number;
 }) {
   const meshRef = useRef<THREE.Mesh>(null!);
+  const geometry = useDrapedExtrude(shape, ROAD_EXTRUDE);
   useEffect(() => {
     meshRef.current.userData.exportToGLB = true;
   }, []);
-  return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, yPos, 0]} material={material}>
-      <extrudeGeometry args={[shape, ROAD_EXTRUDE]} />
-    </mesh>
-  );
+  return <mesh ref={meshRef} geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, yPos, 0]} material={material} />;
 }
 
 // ── Bridge support pillar ──────────────────────────────────────────────────
 
-function BridgePillar({ cx, cz }: { cx: number; cz: number }) {
+function BridgePillar({ cx, cz, cy = 0 }: { cx: number; cz: number; cy?: number }) {
   const meshRef = useRef<THREE.Mesh>(null!);
   useEffect(() => {
     meshRef.current.userData.exportToGLB = true;
@@ -692,7 +439,7 @@ function BridgePillar({ cx, cz }: { cx: number; cz: number }) {
   return (
     <mesh
       ref={meshRef}
-      position={[cx, BRIDGE_Y / 2, cz]}
+      position={[cx, cy + BRIDGE_Y / 2, cz]}
       material={PILLAR_MAT}
     >
       <boxGeometry args={[0.6, BRIDGE_Y, 0.6]} />
@@ -712,19 +459,17 @@ function FlatPolygonMesh({
   yPos: number;
 }) {
   const meshRef = useRef<THREE.Mesh>(null!);
+  const geometry = useDrapedExtrude(shape, FLAT_EXTRUDE);
   useEffect(() => {
     meshRef.current.userData.exportToGLB = true;
   }, []);
-  return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, yPos, 0]} material={material}>
-      <extrudeGeometry args={[shape, FLAT_EXTRUDE]} />
-    </mesh>
-  );
+  return <mesh ref={meshRef} geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, yPos, 0]} material={material} />;
 }
 
 function RoadMeshes() {
   const roads = useAreaStore((state) => state.roads);
   const projection = useAreaStore((state) => state.projection);
+  const terrain = useAreaStore((state) => state.terrain);
 
   const roadItems = useMemo(() => {
     if (!projection) return [];
@@ -732,8 +477,13 @@ function RoadMeshes() {
     return roads.flatMap((road, i) => {
       if (!road.geometry || road.geometry.length < 2) return [];
       const highwayType: string = road.tags?.highway ?? "";
-      const halfW = ROAD_HALF_WIDTH[highwayType] ?? DEFAULT_ROAD_HALF_WIDTH;
-      const material = PEDESTRIAN_TYPES.has(highwayType) ? PATH_MAT : ROAD_MAT;
+      // Use the mapped street width when OSM has one (metres → scene units).
+      const widthTag = parseFloat(road.tags?.width ?? "");
+      const halfW = !isNaN(widthTag) && widthTag > 0 ? widthTag / 2 / 2.183 : ROAD_HALF_WIDTH[highwayType] ?? DEFAULT_ROAD_HALF_WIDTH;
+      const surface: string = road.tags?.surface ?? "";
+      const material = ["sett", "paving_stones", "cobblestone", "unhewn_cobblestone"].includes(surface)
+        ? SETT_MAT
+        : PEDESTRIAN_TYPES.has(highwayType) ? PATH_MAT : ROAD_MAT;
       const isBridge = road.tags?.bridge === "yes";
       const yPos = isBridge ? BRIDGE_Y : 0;
 
@@ -756,17 +506,18 @@ function RoadMeshes() {
         const cx = pts2d.reduce((s, p) => s + p.x, 0) / pts2d.length;
         const cz = -(pts2d.reduce((s, p) => s + p.y, 0) / pts2d.length);
 
-        return [{ shape, material, yPos, isBridge, cx, cz, key: `${road.id ?? i}-${ci}` }];
+        const cy = groundAtWorld(terrain, projection, cx, cz);
+        return [{ shape, material, yPos, isBridge, cx, cz, cy, key: `${road.id ?? i}-${ci}` }];
       });
     });
-  }, [roads, projection]);
+  }, [roads, projection, terrain]);
 
   return (
     <>
-      {roadItems.map(({ shape, material, yPos, isBridge, cx, cz, key }) => (
+      {roadItems.map(({ shape, material, yPos, isBridge, cx, cz, cy, key }) => (
         <group key={key}>
           <RoadMesh shape={shape} material={material} yPos={yPos} />
-          {isBridge && <BridgePillar cx={cx} cz={cz} />}
+          {isBridge && <BridgePillar cx={cx} cz={cz} cy={cy} />}
         </group>
       ))}
     </>
@@ -928,12 +679,24 @@ function RailwayMeshes() {
 
 // Stable position — module-level constant so R3F never sees a new array reference.
 const GROUND_POSITION: [number, number, number] = [0, -0.25, 0];
+// The terrain surface sits just below draped roads and parks.
+const TERRAIN_POSITION: [number, number, number] = [0, -0.06, 0];
 
 // sceneWidth / sceneDepth are computed in Space via useMemo(…, [center]) so they
 // only change when the user generates a new scene, never on canvas resize.
 function GroundPlane({ sceneWidth, sceneDepth }: { sceneWidth: number; sceneDepth: number }) {
   const meshRef = useRef<THREE.Mesh>(null!);
   const includeGroundPlane = useActionStore((state) => state.includeGroundPlane);
+  const terrain = useAreaStore((state) => state.terrain);
+  const projection = useAreaStore((state) => state.projection);
+
+  // With terrain: a subdivided surface lifted to the height grid.
+  const terrainGeometry = useMemo(() => {
+    if (!terrain || !projection || !sceneWidth) return null;
+    const g = new THREE.PlaneGeometry(sceneWidth, sceneDepth, 120, 120).rotateX(-Math.PI / 2);
+    return drapeGeometry(g, terrain, projection, (x, _y, z) => [x, z], "y");
+  }, [terrain, projection, sceneWidth, sceneDepth]);
+  useEffect(() => () => terrainGeometry?.dispose(), [terrainGeometry]);
 
   // Stable args tuple — only a new array when dimensions actually change.
   const boxArgs = useMemo<[number, number, number]>(
@@ -951,6 +714,11 @@ function GroundPlane({ sceneWidth, sceneDepth }: { sceneWidth: number; sceneDept
 
   // Top face sits at y = 0, flush with building bases.
   // X = longitudinal span, Z = latitudinal span (world Z after building rotation).
+  if (terrainGeometry) {
+    return (
+      <mesh ref={meshRef} geometry={terrainGeometry} position={TERRAIN_POSITION} material={GROUND_PREVIEW_MAT} userData={{ exportToGLB: true, groundPlane: true }} />
+    );
+  }
   return (
     <mesh ref={meshRef} position={GROUND_POSITION} material={GROUND_PREVIEW_MAT}>
       <boxGeometry args={boxArgs} />
@@ -1038,6 +806,29 @@ export function Export() {
 export function Space() {
   const areas = useAreaStore((state) => state.areas);
   const projection = useAreaStore((state) => state.projection);
+  const terrain = useAreaStore((state) => state.terrain);
+  const ghostMode = useGhostStore((state) => state.ghostMode);
+  // When the Blender-enhanced model is shown, Mapforge's own meshes are hidden
+  // (but stay clickable and exportable).
+  const hideProcedural = useGhostStore(
+    (s) => s.ghostMode && s.layers.model && s.modelUrl !== null && s.modelStatus === "loaded"
+  );
+
+  useEffect(() => applyGhostTheme(ghostMode), [ghostMode]);
+
+  const pointerDown = useRef<[number, number]>([0, 0]);
+
+  // Escape closes a pinned building card.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        useBuildingSelection.getState().select(null);
+        useGhostStore.getState().selectAcoustic(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Ground plane dimensions — frozen at generation time via projection store.
   // Never recalculates on canvas/viewport resize.
@@ -1052,29 +843,41 @@ export function Space() {
 
   const buildingsData = useMemo(() => {
     if (!projection) return [];
-    const { refLat, refLng, scaleX, scaleY } = projection;
-    const result: Array<{ shape: THREE.Shape; extrudeSettings: any; tags: any }> = [];
-    areas.forEach((bld: any) => {
+    const result: Array<{ geometry: THREE.BufferGeometry; key: string; info: BuildingInfo }> = [];
+    areas.forEach((bld: any, i: number) => {
       if (!bld.geometry || bld.geometry.length < 3) return;
-      const shapePoints = bld.geometry.map((pt: any) =>
-        new THREE.Vector2((pt.lng - refLng) * scaleX, (pt.lat - refLat) * scaleY)
-      );
-      if (!shapePoints[0].equals(shapePoints[shapePoints.length - 1]))
-        shapePoints.push(shapePoints[0]);
-      const shape = new THREE.Shape(shapePoints);
-      let heightValue = parseFloat(bld.tags.height || "");
-      const heightLevels = parseFloat(bld.tags["building:levels"] || "");
-      if (isNaN(heightValue)) heightValue = 10;
-      if (!isNaN(heightLevels)) heightValue = heightLevels * 2.2;
-      result.push({ shape, extrudeSettings: { steps: 1, depth: heightValue, bevelEnabled: false }, tags: bld.tags });
+      const pts = footprintToShape(projection, bld.geometry);
+      if (pts.length < 3) return;
+      const place = buildingPlacement(terrain, bld.geometry);
+      const { geometry } = buildBuildingGeometry(pts, bld.tags ?? {}, bld.id ?? i, place);
+      const key = String(bld.id ?? i);
+      result.push({ geometry, key, info: { id: key, osmType: bld.osmType, tags: bld.tags ?? {}, ring: bld.geometry, pts, base: place.base } });
     });
     return result;
-  }, [areas, projection]);
+  }, [areas, projection, terrain]);
+
+  useEffect(() => () => buildingsData.forEach((b) => b.geometry.dispose()), [buildingsData]);
 
   return (
-    <Canvas camera={{ fov: 90, near: 0.1, far: 7000 }}>
-      <ambientLight intensity={Math.PI / 2} />
-      <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} decay={0} intensity={Math.PI} />
+    <Canvas
+      camera={{ fov: 60, near: 0.5, far: 7000, position: [90, 170, 230] }}
+      onPointerDown={(e) => { pointerDown.current = [e.clientX, e.clientY]; }}
+      onPointerMissed={(e) => {
+        // Close only on a real click on empty space – not at the end of a camera drag.
+        const [x, y] = pointerDown.current;
+        if (Math.hypot(e.clientX - x, e.clientY - y) < 5) {
+          useBuildingSelection.getState().select(null);
+          // While walking, a click on open ground means "walk there".
+          useWalkStore.getState().requestWalkTo(e.clientX, e.clientY);
+        }
+      }}
+    >
+      {/* Day mode follows the real sun and clouds over Haga; Ghost Mode is always night */}
+      {!ghostMode && <DayLighting />}
+      <WeatherEffects />
+      <OpenDataScene />
+      {ghostMode && <GhostScene buildings={buildingsData} />}
+      <group visible={!hideProcedural}>
       <GroundPlane sceneWidth={groundSceneWidth} sceneDepth={groundSceneDepth} />
       <GreenMeshes />
       <WaterPolygonMeshes />
@@ -1082,19 +885,16 @@ export function Space() {
       <WaterRibbonMeshes />
       <RailwayMeshes />
       <RoadMeshes />
-      {buildingsData.map((item, index) => (
-        <Building
-          key={index}
-          shape={item.shape}
-          extrudeSettings={item.extrudeSettings}
-          tags={item.tags}
-        />
+      {buildingsData.map((item) => (
+        <Building key={item.key} id={item.key} geometry={item.geometry} info={item.info} />
       ))}
-      <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />
-      <Car />
+      </group>
+      <BuildingOutlines items={buildingsData} />
+      {/* Trees, tram tracks, lamps … stay visible with the Blender model too */}
+      <StreetDetails />
+      <CameraControls />
+      <WalkControls />
       <Export />
-      <Sky distance={450000} sunPosition={[0, 1, 0]} inclination={0} azimuth={0.25} />
-      <Environment preset="city" />
     </Canvas>
   );
 }
