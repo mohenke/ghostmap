@@ -23,7 +23,8 @@ och AI som utvecklingsassistent.
 | Varulvsdetektor (ljudsensor) | Simulering – styrd av verklig måne och vind | **Fiktiv** |
 | Gastar | Dekoration | – |
 
-Funktioner: Ghost Mode, gåläge på gatunivå (WASD/klick), handhållen spökmätare,
+Sidan öppnar i **normalläge** (Haga som vanlig 3D-stad med verklig data); besökaren slår själv på
+**Ghost Mode**. Funktioner: gåläge på gatunivå (WASD/klick), handhållen spökmätare,
 klickbara hus med historia och "vad finns i huset", händelselogg, syntetiskt varulvsylande.
 
 ## Kom igång lokalt
@@ -54,6 +55,16 @@ nginx-image med `Dockerfile` och `nginx.conf` i repot:
 4. Ange domän (t.ex. `ghostpulse.dindomän.se`) och tryck **Deploy**.
 
 Testerna körs i bygget – går något sönder publiceras det inte. Hälsokontroll: `/healthz`.
+
+### Säkerhet
+
+- Statisk sida: ingen backend, inga nycklar, inga cookies, ingen lagrad besöksdata.
+- Allt eget innehåll (typsnitt = enhetens systemtypsnitt, ljusbild, 3D-modell, Draco-avkodare)
+  ligger lokalt. Webbläsaren kontaktar bara de öppna datakällorna: SMHI, Sensor.community och Wikipedia/Wikimedia.
+- `nginx.conf` skickar en **Content-Security-Policy** som bara tillåter just de källorna
+  (samma policy används av `npm run preview`, så den kan testas lokalt).
+- Länkar och bilder från extern data släpps bara igenom som `https://`.
+- `npm audit`: 0 kända sårbarheter vid publicering.
 
 Prova imagen lokalt: `docker build -t ghost-pulse . && docker run -p 8080:80 ghost-pulse`
 → http://localhost:8080
@@ -89,5 +100,6 @@ Datakällan ligger bakom ett gränssnitt (`GhostDataSource`) och kan bytas mot e
 - Luft: [Sensor.community](https://sensor.community) (ODbL/DbCL)
 - Historia: [Wikipedia](https://sv.wikipedia.org) (CC BY-SA 4.0)
 - Höjddata: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
+- Ljusmiljö (HDRI "Potsdamer Platz"): [Poly Haven](https://polyhaven.com) (CC0)
 
 Originalets README finns i [docs/MAPFORGE-README.md](docs/MAPFORGE-README.md).

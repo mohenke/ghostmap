@@ -60,7 +60,10 @@ type GhostStore = {
   setModelStatus: (status: "idle" | "loaded" | "failed") => void;
 };
 
+if (typeof document !== "undefined") document.body.dataset.ghost = "false";
+
 export const useGhostStore = create<GhostStore>((set) => ({
+  // Visitors first see Haga as a normal 3D city and switch on Ghost Mode themselves.
   ghostMode: false,
   sensors: [],
   readings: {},

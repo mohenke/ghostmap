@@ -1,10 +1,13 @@
 // Short explanation shown when the demo opens; remembers when it was closed.
 import { css } from "@emotion/react";
 import { useState } from "react";
+import { useGhostStore } from "./ghostStore.ts";
 
 const STORAGE_KEY = "ghost-pulse-intro-dismissed";
 
 export function IntroCard() {
+  const ghostMode = useGhostStore((s) => s.ghostMode);
+  const setGhostMode = useGhostStore((s) => s.setGhostMode);
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) !== "1";
@@ -50,32 +53,41 @@ export function IntroCard() {
       </div>
       <ul css={css({ margin: "0 0 10px", paddingLeft: "1.1em", "& li": { marginBottom: 3 } })}>
         <li>
-          En <b>verklig 3D-modell av Haga</b> i Göteborg, byggd från OpenStreetMap: hus, tak, träd, gator och terräng.
+          En <b>verklig 3D-modell av Haga</b> i Göteborg, byggd från öppen data: hus, tak, träd, gator och terräng.
         </li>
         <li>
-          Sex <b>fiktiva spöksensorer</b>. Mätvärdena simuleras i webbläsaren var femte sekund.
+          <b>Verklig live-data</b>: väder från SMHI, luftsensorer, historia från Wikipedia och månen.
         </li>
         <li>
-          <b>Verkligt väder</b> från SMHI: regn, dimma, moln och vind visas i modellen.
+          Slå på <b>Ghost Mode</b> för att se spöksensorer, irrbloss och en varulvsdetektor – med <b>fiktiv</b> spökdata.
         </li>
-        <li>Klicka på en sensor för mätvärden. Dra för att rotera, scrolla för att zooma.</li>
+        <li>Dra för att rotera, scrolla för att zooma, klicka på hus och markörer. Eller gå ned på gatan.</li>
       </ul>
-      <div css={css({ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 })}>
-        <span css={css({ color: "#8b90b8", fontSize: "11px" })}>Dagsläge: knappen uppe till höger</span>
+      <div css={css({ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 })}>
         <button
           onClick={close}
-          css={css({
-            border: "1px solid #a855f7",
-            background: "rgba(168, 85, 247, 0.2)",
-            color: "#f5f3ff",
-            borderRadius: "6px",
-            padding: "4px 12px",
-            cursor: "pointer",
-            fontSize: "12px",
-          })}
+          css={css({ border: "1px solid rgba(139, 92, 246, 0.35)", background: "transparent", color: "#9ca3c7", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontSize: "12px" })}
         >
-          Okej, visa spökena
+          Stäng
         </button>
+        {!ghostMode && (
+          <button
+            onClick={() => { setGhostMode(true); close(); }}
+            css={css({
+              border: "1px solid #a855f7",
+              background: "linear-gradient(90deg, #6d28d9, #a855f7)",
+              color: "#ffffff",
+              fontWeight: 700,
+              borderRadius: "6px",
+              padding: "5px 12px",
+              cursor: "pointer",
+              fontSize: "12px",
+              boxShadow: "0 0 14px rgba(168,85,247,0.5)",
+            })}
+          >
+            👻 Slå på Ghost Mode
+          </button>
+        )}
       </div>
     </div>
   );

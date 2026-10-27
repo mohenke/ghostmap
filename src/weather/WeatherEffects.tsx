@@ -79,7 +79,7 @@ export function DayLighting() {
         mieCoefficient={0.005 + 0.02 * c}
         mieDirectionalG={0.8}
       />
-      <Environment preset="city" environmentIntensity={0.45 * (0.12 + 0.88 * d) * (1 - 0.35 * c)} />
+      <Environment files="/hdri/potsdamer_platz_1k.hdr" environmentIntensity={0.45 * (0.12 + 0.88 * d) * (1 - 0.35 * c)} />
     </>
   );
 }

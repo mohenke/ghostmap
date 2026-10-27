@@ -280,7 +280,7 @@ function Moon() {
     const now = new Date();
     const { elevation, azimuth } = moonPosition(now, WEATHER_POINT.lat, WEATHER_POINT.lon);
     const [dx, dy, dz] = sunDirection(elevation, azimuth);
-    sprite.current.visible = elevation > -3;
+    sprite.current.visible = elevation > 0; // same rule as "ovan horisonten" in the clock panel
     sprite.current.position.set(dx * 800, dy * 800, dz * 800);
   });
   return (

@@ -19,9 +19,7 @@ import type { PointElem, PolygonRing, PolylineElem } from "@/state/areaStore";
 import { useActionStore } from "@/state/exportStore";
 import { Modal } from "@/components/modal/Modal";
 import { TopNav } from "@/components/nav/TopNav";
-import { getCookie } from "@/utils/cookie";
 import { Row } from "@/components/flex/Row";
-import instanceFleet from "@/api/axios";
 import { useGhostStore } from "@/ghost/ghostStore";
 import { useGhostFeed } from "@/ghost/useGhostFeed";
 import { GhostPanel } from "@/ghost/GhostPanel";
@@ -125,16 +123,35 @@ const BOX_HALF_LAT: Record<"small" | "medium" | "large", number> = {
   large: 0.029,
 };
 
+const bootPulse = keyframes`0%,100%{opacity:.35;transform:scale(.96)}50%{opacity:1;transform:scale(1)}`;
+
+function BootScreen() {
+  return (
+    <div
+      css={css({
+        position: "absolute", inset: 0, zIndex: 3000, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center", gap: 14, background: "radial-gradient(circle at 50% 40%, #1a1240, #04040b 70%)",
+        color: "#e5e7ff", textAlign: "center",
+      })}
+    >
+      <div css={css({ fontSize: 54, animation: `${bootPulse} 1.6s ease-in-out infinite` })}>👻</div>
+      <div css={css({ fontSize: 26, fontWeight: 800, letterSpacing: "0.2em", background: "linear-gradient(90deg,#22d3ee,#a855f7)", WebkitBackgroundClip: "text", color: "transparent" })}>
+        GHOST PULSE
+      </div>
+      <div css={css({ fontSize: 13, color: "#9ca3c7" })}>Kalibrerar spöksensorerna i Haga…</div>
+    </div>
+  );
+}
+
 function App() {
   const [isNextButtonDisabled, setIsNextButtonDisabled] = useState(true);
   const [areaData, setAreaData] = useState([]);
   const [steps, setSteps] = useState(["front", "processing"]);
   const [step, setStep] = useState(0);
+  // While the Haga snapshot loads, show a dark boot screen instead of Mapforge's area picker.
+  const [booting, setBooting] = useState(true);
   const [isWarnModal, setIsWarnModal] = useState(false);
   const [isExportModal, setIsExportModal] = useState(false);
-  const [isFleetLogin, setIsFleetLogin] = useState(false);
-  const [isFleetModal, setIsFleetModal] = useState(false);
-  const [spaceList, setSpaceList] = useState([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [isFetchingBuildings, setIsFetchingBuildings] = useState(false);
   const [hasFetchedBuildings, setHasFetchedBuildings] = useState(false);
@@ -171,7 +188,6 @@ function App() {
   const ghostMode = useGhostStore((state) => state.ghostMode);
   const walking = useWalkStore((state) => state.mode !== "orbit");
   const setAction = useActionStore((state) => state.setAction);
-  const setFleet = useActionStore((state) => state.setFleet);
   const includeGroundPlane = useActionStore((state) => state.includeGroundPlane);
   const setIncludeGroundPlane = useActionStore((state) => state.setIncludeGroundPlane);
 
@@ -190,44 +206,6 @@ function App() {
 
   const exportFile = () => {
     setAction(true);
-  };
-
-  const exportFleet = () => {
-    setAction(true);
-  };
-
-  const getFleetSpaces = async () => {
-    const getSpace: any = await instanceFleet.get("space");
-
-    setSpaceList([
-      ...getSpace.data.spaces.map((item) => {
-        return {
-          ...item,
-          key: item.id,
-        };
-      }),
-    ]);
-  };
-
-  const putGlbOnFleetSpace = (spaceId) => {
-    setFleet(spaceId, "fleet");
-    setTimeout(() => {
-      exportFleet();
-    }, 100);
-  };
-
-  const loadFleetSpace = () => {
-    getFleetSpaces();
-    setIsFleetModal(true);
-  };
-
-  const checkFleetLogin = () => {
-    try {
-      const isCookie = getCookie("token");
-      if (isCookie) {
-        setIsFleetLogin(true);
-      }
-    } catch (error) {}
   };
 
   const handleDone = (data) => {
@@ -590,11 +568,11 @@ function App() {
       useGhostStore.getState().setModelUrl(HAGA_MODEL_URL);
       setCenter([{ lat: north, lng: east }, { lat: south, lng: west }]);
       setStep(2);
-      // The demo opens straight into the ghost meter.
-      useGhostStore.getState().setGhostMode(true);
+      setBooting(false);
     } catch (err) {
       console.error("Could not load Haga snapshot", err);
       setHagaError(err instanceof Error ? err.message : String(err));
+      setBooting(false);
     }
   };
 
@@ -610,15 +588,13 @@ function App() {
     setIsExportModal(true);
   };
 
-  useEffect(() => {
-    checkFleetLogin();
-  }, []);
-
   return (
     <div css={css({ height: "100%", width: "100%" })}>
       <TopNav step={step} />
 
-      <FullscreenModal isOpen={steps[step] == "front"}>
+      {booting && <BootScreen />}
+
+      <FullscreenModal isOpen={!booting && steps[step] == "front"}>
         <Column gap="1rem">
           <Column gap="0.5rem">
             <Title>Generate 3d map</Title>
@@ -706,12 +682,13 @@ function App() {
               {boxSize === "small" ? "~¼ mi" : boxSize === "medium" ? "~1 mi" : "~4 mi"} per side
             </span>
           </div>
-          <MapComponent
+          {/* Only mount the 2D map when the picker is actually shown – saves needless OSM tile requests */}
+          {!booting && steps[step] == "front" && <MapComponent
             ref={mapRef}
             onRemove={handleRemove}
             onDone={handleDone}
             externalBounds={externalBounds}
-          />
+          />}
         </Column>
       </FullscreenModal>
 
@@ -754,7 +731,7 @@ function App() {
       </PrevButton>
 
       <NextButton
-        isShow={step === 0}
+        isShow={step === 0 && !booting}
         disabled={isNextButtonDisabled}
         onClick={handleClickNextStep}
       >
@@ -805,35 +782,13 @@ function App() {
               GLB Download <Download css={IconSize} />
             </Button>
 
-            {/* {isFleetLogin ? (
-              <Button isShow={true} onClick={loadFleetSpace}>
-                Fleet Interlock
-              </Button>
-            ) : (
-              <Button
-                isShow={true}
-                onClick={() => window.open("https://fleet.im/auth")}
-              >
-                Fleet Login
-              </Button>
-            )} */}
           </Row>
         </Column>
       </Modal>
 
-      <Modal isOpen={isFleetModal} onClose={() => setIsFleetModal(false)}>
-        <Column gap="0.5rem">
-          <Title>Select Fleet Space</Title>
-          {spaceList.map((item, index) => (
-            <Button isShow={true} onClick={() => putGlbOnFleetSpace(item.id)}>
-              {item.title}
-            </Button>
-          ))}
-        </Column>
-      </Modal>
 
       {step === 2 && ghostMode && <GhostPanel />}
-      {step === 2 && ghostMode && !walking && <IntroCard />}
+      {step === 2 && !walking && <IntroCard />}
       {step === 2 && <WalkHud ghostMode={ghostMode} />}
       {step === 2 && <ClockWeather ghostMode={ghostMode} />}
       {step === 2 && ghostMode && <GhostMeter />}

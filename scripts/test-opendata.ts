@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { moonAge, moonIllumination, moonPhaseName, daysToFullMoon } from "../src/opendata/moon.ts";
 import { parseAirSensors, interpolatePm25, pmLabel } from "../src/opendata/airSensors.ts";
-import { mergePages } from "../src/opendata/wikipedia.ts";
+import { mergePages, safeUrl } from "../src/opendata/wikipedia.ts";
 
 // Moon: full moon 26 Oct 2026 04:12 UTC, new moon 9 Nov 2026 07:02 UTC
 const full = new Date(Date.UTC(2026, 9, 26, 4, 12));
@@ -36,5 +36,13 @@ mergePages(m, [{ pageid: 1, title: "Skansen Kronan", coordinates: [{ lat: 57.696
 mergePages(m, [{ pageid: 1, title: "Skansen Kronan", extract: "En försvarsanläggning." }]);
 assert.equal(m.get(1).extract, "En försvarsanläggning.");
 assert.equal(m.get(1).lat, 57.696, "coordinates kept from the first response");
+
+// Links from external data must be https
+assert.equal(safeUrl("javascript:alert(1)"), undefined);
+assert.equal(safeUrl("http://example.com"), undefined);
+assert.equal(safeUrl("https://sv.wikipedia.org/wiki/Haga"), "https://sv.wikipedia.org/wiki/Haga");
+const m2 = new Map();
+mergePages(m2, [{ pageid: 9, title: "X", coordinates: [{ lat: 1, lon: 1 }], fullurl: "javascript:alert(1)" }]);
+assert.equal(m2.get(9).url, "https://sv.wikipedia.org/?curid=9", "unsafe link replaced");
 
 console.log("✓ Alla öppendatatester passerade");

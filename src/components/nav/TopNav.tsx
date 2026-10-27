@@ -67,59 +67,89 @@ export function TopNav({ step }: { step: number }) {
           >
             👻 GHOST PULSE
           </span>
-          <span css={css({ fontSize: "11px", color: darkBar ? "#8b90b8" : "#9aa0a6" })}>
+          <span css={css({ fontSize: "11px", color: darkBar ? "#8b90b8" : "#9aa0a6", "@media (max-width: 1100px)": { display: "none" } })}>
             Haga, Göteborg
           </span>
         </div>
 
+        {/* Centre: the two main controls, big and easy to find */}
         <div
           css={css({
-            padding: "0rem 0rem",
-            [mq[0]]: {
-              display: "none",
-            },
-          })}
-        ></div>
-
-        <div
-          css={css({
-            paddingRight: "2rem",
-            display: "flex",
-            flexDirection: "row",
-            gap: "0.5rem",
+            position: "absolute",
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: step == 2 ? "flex" : "none",
+            alignItems: "center",
+            gap: "0.6rem",
           })}
         >
-          <button
-            onClick={() => setGhostMode(!ghostMode)}
+          <div
+            role="radiogroup"
+            aria-label="Visningsläge"
             css={css({
-              display: step == 2 ? "flex" : "none",
-              alignItems: "center",
-              gap: "0.4rem",
-              padding: "0.45rem 1rem",
-              borderRadius: "8px",
-              fontSize: "12px",
-              fontWeight: 600,
-              letterSpacing: "0.04em",
-              cursor: "pointer",
-              border: ghostMode ? "1px solid #a855f7" : "1px solid #7c3aed",
-              color: ghostMode ? "#f5f3ff" : "#ffffff",
-              background: ghostMode
-                ? "linear-gradient(90deg, rgba(34,211,238,0.25), rgba(168,85,247,0.35))"
-                : "linear-gradient(90deg, #4c1d95, #7c3aed)",
-              boxShadow: ghostMode ? "0 0 16px rgba(168,85,247,0.55)" : "0 2px 10px rgba(124,58,237,0.35)",
-              transition: "0.2s",
+              display: "flex",
+              padding: 3,
+              borderRadius: 999,
+              background: darkBar ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
+              border: `1px solid ${darkBar ? "rgba(139, 92, 246, 0.35)" : "rgba(0,0,0,0.1)"}`,
             })}
           >
-            {ghostMode ? "👻 Ghost Mode: PÅ" : "👻 Aktivera Ghost Mode"}
-          </button>
+            {([
+              [true, "👻 Ghost Mode"],
+              [false, "🏙 Normalläge"],
+            ] as const).map(([on, label]) => {
+              const active = ghostMode === on;
+              return (
+                <button
+                  key={label}
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setGhostMode(on)}
+                  css={css({
+                    padding: "0.42rem 1rem",
+                    borderRadius: 999,
+                    border: "none",
+                    cursor: active ? "default" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    letterSpacing: "0.03em",
+                    whiteSpace: "nowrap",
+                    transition: "0.2s",
+                    color: active ? "#ffffff" : darkBar ? "#a5a9cf" : "#4b5563",
+                    background: active
+                      ? on
+                        ? "linear-gradient(90deg, #6d28d9, #a855f7)"
+                        : "linear-gradient(90deg, #0e7490, #22d3ee)"
+                      : "transparent",
+                    boxShadow: active ? (on ? "0 0 16px rgba(168,85,247,0.6)" : "0 0 12px rgba(34,211,238,0.45)") : "none",
+                    "&:hover": active ? {} : { color: darkBar ? "#ffffff" : "#111827" },
+                  })}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
 
-          <NavButton
-            isShow={step == 2}
+          <button
             disabled={walkMode === "entering" || walkMode === "exiting"}
             onClick={() => (walkMode === "orbit" ? useWalkStore.getState().enter() : useWalkStore.getState().exit())}
+            css={css({
+              padding: "0.48rem 1.1rem",
+              borderRadius: 999,
+              fontSize: 13,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+              border: `1px solid ${walkMode === "orbit" ? (darkBar ? "rgba(34,211,238,0.6)" : "#0e7490") : "#fb923c"}`,
+              color: darkBar ? "#e6fffb" : "#0e3a44",
+              background: walkMode === "orbit" ? (darkBar ? "rgba(34,211,238,0.12)" : "rgba(34,211,238,0.18)") : "rgba(251,146,60,0.2)",
+              "&:hover": { background: darkBar ? "rgba(34,211,238,0.22)" : "rgba(34,211,238,0.3)" },
+              "&:disabled": { opacity: 0.6, cursor: "wait" },
+            })}
           >
             {walkMode === "orbit" || walkMode === "exiting" ? "🚶 Gå på gatan" : "⬆ Lämna gatan"}
-          </NavButton>
+          </button>
         </div>
       </div>
 

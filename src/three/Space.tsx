@@ -9,7 +9,6 @@ import { GLTFExporter } from "three/examples/jsm/Addons.js";
 import { CameraControls } from "./CameraControls";
 import { WalkControls } from "@/walk/WalkControls";
 import { useWalkStore } from "@/walk/walkStore";
-import instanceFleet from "@/api/axios";
 import { footprintToShape } from "./geo";
 import { buildRoadShape, clipPolylineToBbox, type LatLon } from "./polyline";
 import { buildBuildingGeometry } from "./roofs";
@@ -729,7 +728,6 @@ function GroundPlane({ sceneWidth, sceneDepth }: { sceneWidth: number; sceneDept
 export function Export() {
   const { scene } = useThree();
   const action = useActionStore((state) => state.action);
-  const fleetSpaceId = useActionStore((state) => state.fleetSpaceId);
 
   const exportType = useActionStore((state) => state.exportType);
 
@@ -741,21 +739,6 @@ export function Export() {
       exportGLB();
     }
   }, [action, setAction, scene]);
-
-  const uploadFleet = async (blob) => {
-    const formData = new FormData();
-
-    formData.append("object", blob, "box3d.glb");
-    formData.append("title", "New Object");
-    formData.append("description", "");
-    formData.append("spaceId", fleetSpaceId);
-
-    await instanceFleet.post("space/file/mesh", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    });
-  };
 
   const exportGLB = () => {
     const exportRoot = new THREE.Group();
@@ -785,10 +768,6 @@ export function Export() {
             link.download = "scene.glb";
             link.click();
             document.body.removeChild(link);
-          }
-
-          if (exportType == "fleet") {
-            uploadFleet(blob);
           }
         } else {
           console.error("GLB export failed: unexpected result", result);

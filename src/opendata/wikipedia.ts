@@ -22,6 +22,17 @@ type RawPage = {
   fullurl?: string;
 };
 
+/** External data is never trusted as a link: only plain https URLs get through (no javascript: etc.). */
+export function safeUrl(u: string | undefined): string | undefined {
+  if (!u) return undefined;
+  try {
+    const url = new URL(u);
+    return url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Pure: merge pages from several continued responses. */
 export function mergePages(target: Map<number, HistoryPlace>, pages: RawPage[]) {
   for (const p of pages) {
@@ -33,8 +44,8 @@ export function mergePages(target: Map<number, HistoryPlace>, pages: RawPage[]) 
       lat: c?.lat ?? prev?.lat ?? NaN,
       lon: c?.lon ?? prev?.lon ?? NaN,
       extract: p.extract || prev?.extract || "",
-      thumbnail: p.thumbnail?.source ?? prev?.thumbnail,
-      url: p.fullurl ?? prev?.url ?? `https://sv.wikipedia.org/?curid=${p.pageid}`,
+      thumbnail: safeUrl(p.thumbnail?.source) ?? prev?.thumbnail,
+      url: safeUrl(p.fullurl) ?? prev?.url ?? `https://sv.wikipedia.org/?curid=${p.pageid}`,
     };
     target.set(p.pageid, place);
   }
